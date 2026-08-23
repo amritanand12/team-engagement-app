@@ -1,0 +1,67 @@
+[
+  {
+    "employee_code": "HRMS-001",
+    "full_name": "Meera Iyer",
+    "preferred_name": null,
+    "email": "meera@example.com",
+    "photo_url": "https://cdn.example.com/meera.jpg",
+    "date_of_birth": "1994-08-22",
+    "date_of_joining": "2019-03-10",
+    "department": "Platform Engineering",
+    "manager_employee_code": null,
+    "team_channel_id": "team-platform",
+    "is_active": true
+  },
+  {
+    "employee_code": "HRMS-002",
+    "full_name": "Leap Day Larry",
+    "preferred_name": "Larry",
+    "email": "larry@example.com",
+    "photo_url": null,
+    "date_of_birth": "2000-02-29",
+    "date_of_joining": "2022-01-05",
+    "department": "QA",
+    "manager_employee_code": "HRMS-001",
+    "team_channel_id": "team-qa",
+    "is_active": true
+  },
+  {
+    "employee_code": "HRMS-003",
+    "full_name": "Dual Event Dana",
+    "preferred_name": null,
+    "email": "dana@example.com",
+    "photo_url": "https://cdn.example.com/dana.jpg",
+    "date_of_birth": "1990-08-22",
+    "date_of_joining": "2016-08-22",
+    "department": "Sales",
+    "manager_employee_code": null,
+    "team_channel_id": "team-sales",
+    "is_active": true
+  },
+  {
+    "employee_code": "HRMS-004",
+    "full_name": "Inactive Ian",
+    "preferred_name": null,
+    "email": "ian@example.com",
+    "photo_url": null,
+    "date_of_birth": "1988-08-22",
+    "date_of_joining": "2015-08-22",
+    "department": "Ops",
+    "manager_employee_code": null,
+    "team_channel_id": null,
+    "is_active": false
+  },
+  {
+    "employee_code": "HRMS-005",
+    "full_name": "No Photo Nadia",
+    "preferred_name": null,
+    "email": "nadia@example.com",
+    "photo_url": null,
+    "date_of_birth": "1992-08-22",
+    "date_of_joining": "2023-05-01",
+    "department": "Design",
+    "manager_employee_code": null,
+    "team_channel_id": null,
+    "is_active": true
+  }
+]

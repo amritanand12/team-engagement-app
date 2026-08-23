@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Happy Birthday {{ name }}</title></head>
+<body style="margin:0;padding:0;background-color:#f4f4f7;font-family:'Segoe UI',Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7;padding:32px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+          <tr>
+            <td style="background:linear-gradient(135deg,#ff9a76,#ff6f91);padding:28px;text-align:center;">
+              <img src="{{ company_logo_url }}" alt="{{ company_name }}" height="28" style="margin-bottom:12px;" />
+              <h1 style="color:#ffffff;margin:0;font-size:24px;">🎉 Happy Birthday!</h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;text-align:center;">
+              <img src="{{ photo_url }}" alt="{{ name }}"
+                   width="120" height="120"
+                   style="border-radius:50%;object-fit:cover;width:120px;height:120px;border:4px solid #ff6f91;" />
+              <h2 style="margin:20px 0 4px;color:#2d2d2d;font-size:20px;">{{ name }}</h2>
+              {% if department %}
+              <p style="margin:0 0 16px;color:#8a8a8a;font-size:14px;">{{ department }}</p>
+              {% endif %}
+              <p style="color:#4a4a4a;font-size:15px;line-height:1.6;">
+                Wishing you a fantastic day filled with joy and celebration.
+                Thank you for being part of the {{ company_name }} team!
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 32px 28px;text-align:center;">
+              <p style="color:#b0b0b0;font-size:12px;margin:0;">— From everyone at {{ company_name }}</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

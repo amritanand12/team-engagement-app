@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Today at {{ company_name }}</title></head>
+<body style="margin:0;padding:0;background-color:#f4f4f7;font-family:'Segoe UI',Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7;padding:32px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+          <tr>
+            <td style="background:#2d2d2d;padding:24px;text-align:center;">
+              <img src="{{ company_logo_url }}" alt="{{ company_name }}" height="26" />
+              <h1 style="color:#ffffff;margin:12px 0 0;font-size:20px;">Celebrating today · {{ display_date }}</h1>
+            </td>
+          </tr>
+
+          {% if combined_people %}
+          <tr>
+            <td style="padding:24px 28px 8px;">
+              <h3 style="margin:0 0 12px;color:#2d2d2d;font-size:15px;">🎉🎊 Double Celebration</h3>
+            </td>
+          </tr>
+          {% for person in combined_people %}
+          <tr>
+            <td style="padding:0 28px 16px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td width="56">
+                    <img src="{{ person.photo_url }}" width="48" height="48" style="border-radius:50%;object-fit:cover;width:48px;height:48px;" alt="{{ person.name }}" />
+                  </td>
+                  <td style="padding-left:12px;">
+                    <p style="margin:0;font-weight:600;color:#2d2d2d;font-size:14px;">{{ person.name }}</p>
+                    <p style="margin:2px 0 0;color:#8a8a8a;font-size:13px;">Birthday &amp; {{ person.years }}-year Work Anniversary</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {% endfor %}
+          {% endif %}
+
+          {% if birthdays %}
+          <tr>
+            <td style="padding:16px 28px 8px;">
+              <h3 style="margin:0 0 12px;color:#2d2d2d;font-size:15px;">🎂 Birthdays</h3>
+            </td>
+          </tr>
+          {% for person in birthdays[:max_visible] %}
+          <tr>
+            <td style="padding:0 28px 16px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td width="56">
+                    <img src="{{ person.photo_url }}" width="48" height="48" style="border-radius:50%;object-fit:cover;width:48px;height:48px;" alt="{{ person.name }}" />
+                  </td>
+                  <td style="padding-left:12px;">
+                    <p style="margin:0;font-weight:600;color:#2d2d2d;font-size:14px;">{{ person.name }}</p>
+                    {% if person.department %}<p style="margin:2px 0 0;color:#8a8a8a;font-size:13px;">{{ person.department }}</p>{% endif %}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {% endfor %}
+          {% if birthdays|length > max_visible %}
+          <tr><td style="padding:0 28px 16px;"><p style="color:#8a8a8a;font-size:13px;margin:0;">...and {{ birthdays|length - max_visible }} more 🎉</p></td></tr>
+          {% endif %}
+          {% endif %}
+
+          {% if anniversaries %}
+          <tr>
+            <td style="padding:16px 28px 8px;">
+              <h3 style="margin:0 0 12px;color:#2d2d2d;font-size:15px;">🎊 Work Anniversaries</h3>
+            </td>
+          </tr>
+          {% for person in anniversaries[:max_visible] %}
+          <tr>
+            <td style="padding:0 28px 16px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td width="56">
+                    <img src="{{ person.photo_url }}" width="48" height="48" style="border-radius:50%;object-fit:cover;width:48px;height:48px;" alt="{{ person.name }}" />
+                  </td>
+                  <td style="padding-left:12px;">
+                    <p style="margin:0;font-weight:600;color:#2d2d2d;font-size:14px;">{{ person.name }}</p>
+                    <p style="margin:2px 0 0;color:#8a8a8a;font-size:13px;">{{ person.years }} year{{ 's' if person.years != 1 else '' }}{% if person.department %} · {{ person.department }}{% endif %}</p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          {% endfor %}
+          {% if anniversaries|length > max_visible %}
+          <tr><td style="padding:0 28px 16px;"><p style="color:#8a8a8a;font-size:13px;margin:0;">...and {{ anniversaries|length - max_visible }} more 🎊</p></td></tr>
+          {% endif %}
+          {% endif %}
+
+          <tr>
+            <td style="padding:16px 28px 24px;text-align:center;">
+              <p style="color:#b0b0b0;font-size:12px;margin:0;">{{ company_name }} · Team Engagement</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

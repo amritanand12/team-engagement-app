@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>10 Year Anniversary {{ name }}</title></head>
+<body style="margin:0;padding:0;background-color:#f4f4f7;font-family:'Segoe UI',Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7;padding:32px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#1c1c2b;border-radius:12px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,0.35);border:2px solid #d4af37;">
+          <tr>
+            <td style="background:linear-gradient(135deg,#2c2c54,#474787);padding:28px;text-align:center;">
+              <img src="{{ company_logo_url }}" alt="{{ company_name }}" height="28" style="margin-bottom:12px;" />
+              <h1 style="color:#f9e79f;margin:0;font-size:24px;">👑 A Decade of Excellence</h1>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;text-align:center;">
+              <img src="{{ photo_url }}" alt="{{ name }}"
+                   width="140" height="140"
+                   style="border-radius:50%;object-fit:cover;width:140px;height:140px;border:5px solid #f9e79f;" />
+              <h2 style="margin:20px 0 4px;color:#ffffff;font-size:22px;">{{ name }}</h2>
+              <p style="margin:0 0 16px;color:#f9e79f;font-size:18px;font-weight:700;">{{ years }} years at {{ company_name }}</p>
+              {% if department %}
+              <p style="margin:0 0 16px;color:#a0a0b8;font-size:14px;">{{ department }}</p>
+              {% endif %}
+              <p style="color:#d0d0e0;font-size:15px;line-height:1.6;">
+                Ten years is a remarkable achievement. Thank you for a decade
+                of dedication, leadership, and lasting impact.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:16px 32px 28px;text-align:center;">
+              <p style="color:#6a6a80;font-size:12px;margin:0;">— From everyone at {{ company_name }}</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
