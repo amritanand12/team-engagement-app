@@ -8,10 +8,13 @@ import {
   RefreshCw,
   Sparkles,
   LogOut,
+  Settings as SettingsIcon,
+  Crown,
+  Building,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
-export type NavTab = 'overview' | 'events' | 'employees' | 'digests' | 'templates';
+export type NavTab = 'superadmin' | 'overview' | 'events' | 'employees' | 'digests' | 'templates' | 'settings';
 
 interface SidebarProps {
   activeTab: NavTab;
@@ -30,14 +33,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isMobileOpen,
   onCloseMobile,
 }) => {
-  const { logout } = useAuth();
+  const { user, activeOrg, isSuperAdmin, logout } = useAuth();
 
   const navItems = [
+    ...(isSuperAdmin ? [{ id: 'superadmin' as NavTab, label: 'Platform Hub', icon: Crown }] : []),
     { id: 'overview' as NavTab, label: 'Overview', icon: LayoutDashboard },
     { id: 'events' as NavTab, label: 'Events Log', icon: CalendarCheck },
     { id: 'employees' as NavTab, label: 'Employees', icon: Users },
     { id: 'digests' as NavTab, label: 'Daily Digests', icon: Mail },
     { id: 'templates' as NavTab, label: 'Templates', icon: FileCode },
+    { id: 'settings' as NavTab, label: 'Settings & Demo', icon: SettingsIcon },
   ];
 
   const handleNavClick = (tab: NavTab) => {
@@ -67,7 +72,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
           <div>
             <h1 className="text-base font-bold text-white tracking-tight">Team Engagement</h1>
-            <p className="text-xs text-slate-400 font-medium">Admin Ops Console</p>
+            <p className="text-xs text-slate-400 font-medium">
+              {isSuperAdmin ? 'SuperAdmin Console' : (activeOrg?.name || 'Admin Console')}
+            </p>
           </div>
         </div>
 
@@ -79,6 +86,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
+            const isPlatformTab = item.id === 'superadmin';
             return (
               <button
                 key={item.id}
@@ -86,11 +94,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onClick={() => handleNavClick(item.id)}
                 className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${
                   isActive
-                    ? 'bg-rose-500/15 text-rose-400 font-semibold shadow-inner border border-rose-500/30'
+                    ? isPlatformTab
+                      ? 'bg-purple-500/20 text-purple-300 font-semibold shadow-inner border border-purple-500/40'
+                      : 'bg-rose-500/15 text-rose-400 font-semibold shadow-inner border border-rose-500/30'
                     : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
                 }`}
               >
-                <Icon className={`w-4 h-4 ${isActive ? 'text-rose-400' : 'text-slate-400'}`} />
+                <Icon
+                  className={`w-4 h-4 ${
+                    isActive
+                      ? isPlatformTab
+                        ? 'text-purple-400'
+                        : 'text-rose-400'
+                      : 'text-slate-400'
+                  }`}
+                />
                 <span>{item.label}</span>
               </button>
             );
@@ -125,16 +143,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         {/* Bottom User / Session */}
-        <div className="p-4 border-t border-slate-800 bg-slate-950/40">
+        <div className="p-4 border-t border-slate-800 bg-slate-950/60">
           <div className="flex items-center justify-between px-2 py-1.5">
-            <div className="flex items-center gap-2 text-xs text-slate-400">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Admin Session Active</span>
+            <div className="flex-1 min-w-0 pr-2">
+              <p className="text-xs font-semibold text-white truncate">
+                {user?.full_name || 'Admin User'}
+              </p>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                <span className="text-[11px] text-slate-400 truncate">
+                  {isSuperAdmin ? 'Platform SuperAdmin' : (user?.email || 'Tenant Session')}
+                </span>
+              </div>
             </div>
             <button
               type="button"
               onClick={logout}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors shrink-0"
               title="End Session (Logout)"
             >
               <LogOut className="w-4 h-4" />

@@ -22,7 +22,7 @@ def test_health_endpoint(client):
 
 def test_admin_endpoint_requires_api_key(client):
     resp = client.post("/admin/scan/trigger")
-    assert resp.status_code == 422  # missing required header
+    assert resp.status_code == 401  # missing required auth header
 
 
 def test_admin_endpoint_rejects_wrong_api_key(client):

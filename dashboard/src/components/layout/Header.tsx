@@ -1,6 +1,7 @@
 import React from 'react';
-import { Menu, Play, RefreshCw, Clock } from 'lucide-react';
+import { Menu, Play, RefreshCw, Clock, Crown, Building2 } from 'lucide-react';
 import { NavTab } from './Sidebar';
+import { useAuth } from '../../context/AuthContext';
 
 interface HeaderProps {
   activeTab: NavTab;
@@ -15,8 +16,12 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenScanModal,
   onOpenHrmsSync,
 }) => {
+  const { user, activeOrg, isSuperAdmin, role } = useAuth();
+
   const getTabTitle = () => {
     switch (activeTab) {
+      case 'superadmin':
+        return 'Platform SuperAdmin Hub';
       case 'overview':
         return 'Operations Overview';
       case 'events':
@@ -27,6 +32,8 @@ export const Header: React.FC<HeaderProps> = ({
         return 'Team Digest Logs';
       case 'templates':
         return 'Email Templates & Variants';
+      case 'settings':
+        return 'Organization Settings';
       default:
         return 'Dashboard';
     }
@@ -49,10 +56,25 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <Menu className="w-5 h-5" />
         </button>
-        <div>
+        <div className="flex items-center gap-3">
           <h2 className="text-base sm:text-lg font-bold text-slate-800 tracking-tight leading-none">
             {getTabTitle()}
           </h2>
+
+          {/* Org & Role Badge */}
+          <div className="hidden sm:flex items-center gap-2">
+            {isSuperAdmin ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 border border-purple-200 text-[10px] font-extrabold uppercase tracking-wider">
+                <Crown className="w-3 h-3 text-purple-600" />
+                <span>SuperAdmin</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-bold">
+                <Building2 className="w-3 h-3 text-rose-500" />
+                <span>{activeOrg?.name || 'Tenant Admin'}</span>
+              </span>
+            )}
+          </div>
         </div>
       </div>
 

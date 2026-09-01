@@ -3,8 +3,12 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.models import EventTemplate, EventType
+from app.config import get_settings
+from app.models import EventTemplate, EventType, Organization, User, UserRole
+from app.services.auth import hash_password
 from app.services.renderer import load_seed_template_file
+
+settings = get_settings()
 
 DEFAULT_TEMPLATES = [
     dict(
@@ -34,12 +38,14 @@ DEFAULT_TEMPLATES = [
 ]
 
 
-def seed_default_templates(db: Session) -> int:
+def seed_default_templates(db: Session, organization_id: str) -> int:
+    """Seeds the four default templates for a specific organization."""
     created = 0
     for tpl in DEFAULT_TEMPLATES:
         existing = (
             db.query(EventTemplate)
             .filter(
+                EventTemplate.organization_id == organization_id,
                 EventTemplate.event_type == tpl["event_type"],
                 EventTemplate.variant_key == tpl["variant_key"],
                 EventTemplate.is_active.is_(True),
@@ -51,6 +57,7 @@ def seed_default_templates(db: Session) -> int:
         html_body = load_seed_template_file(tpl["filename"])
         db.add(
             EventTemplate(
+                organization_id=organization_id,
                 event_type=tpl["event_type"],
                 variant_key=tpl["variant_key"],
                 subject_line=tpl["subject_line"],
@@ -61,3 +68,64 @@ def seed_default_templates(db: Session) -> int:
         created += 1
     db.commit()
     return created
+
+
+def seed_default_users(db: Session, default_org_id: str) -> None:
+    """Seeds the default platform SuperAdmin and default Tenant Admin if they do not exist."""
+    # 1. SuperAdmin
+    superadmin = db.query(User).filter(User.email == "admin@platform.local").first()
+    if not superadmin:
+        superadmin = User(
+            email="admin@platform.local",
+            full_name="Platform SuperAdmin",
+            password_hash=hash_password("admin123"),
+            role=UserRole.SUPER_ADMIN,
+            organization_id=None,
+            is_active=True,
+        )
+        db.add(superadmin)
+
+    # 2. Default Tenant Admin
+    tenant_admin = db.query(User).filter(User.email == "admin@acme.com").first()
+    if not tenant_admin:
+        tenant_admin = User(
+            email="admin@acme.com",
+            full_name="Acme Admin",
+            password_hash=hash_password("acme123"),
+            role=UserRole.TENANT_ADMIN,
+            organization_id=default_org_id,
+            is_active=True,
+        )
+        db.add(tenant_admin)
+
+    db.commit()
+
+
+def seed_default_organization(db: Session) -> Organization:
+    """
+    Ensures a primary organization exists matching ADMIN_API_KEY.
+    If no organization exists, creates the default one and seeds templates.
+    """
+    org = db.query(Organization).filter(Organization.api_key == settings.ADMIN_API_KEY).first()
+    if not org:
+        org = db.query(Organization).filter(Organization.slug == "default").first()
+
+    if not org:
+        org = Organization(
+            name=settings.COMPANY_NAME,
+            slug="default",
+            api_key=settings.ADMIN_API_KEY,
+            company_logo_url=settings.COMPANY_LOGO_URL,
+            business_timezone=settings.BUSINESS_TIMEZONE,
+            leap_day_policy=settings.LEAP_DAY_POLICY,
+            digest_channel_id=settings.DEFAULT_DIGEST_CHANNEL_ID,
+            is_active=True,
+            is_demo=True,
+        )
+        db.add(org)
+        db.commit()
+        db.refresh(org)
+
+    seed_default_templates(db, org.id)
+    seed_default_users(db, org.id)
+    return org

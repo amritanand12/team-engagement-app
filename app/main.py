@@ -8,8 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.database import init_db, session_scope
-from app.routers import admin, health
-from app.seed import seed_default_templates
+from app.routers import admin, auth, health, superadmin
+from app.seed import seed_default_organization
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -20,7 +20,7 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     init_db()
     with session_scope() as db:
-        seed_default_templates(db)
+        seed_default_organization(db)
     start_scheduler()
     yield
     stop_scheduler()
@@ -42,5 +42,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
+app.include_router(auth.router)
 app.include_router(admin.router)
+app.include_router(superadmin.router)
 

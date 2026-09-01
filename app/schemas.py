@@ -14,6 +14,7 @@ class EmployeeOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    organization_id: str | None = None
     employee_code: str
     full_name: str
     preferred_name: str | None = None
@@ -101,6 +102,7 @@ class EventLogOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    organization_id: str | None = None
     employee_id: str
     event_type: EventType
     event_date: date
@@ -140,6 +142,7 @@ class EventTemplateOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    organization_id: str | None = None
     event_type: EventType
     variant_key: str
     subject_line: str
@@ -149,7 +152,9 @@ class EventTemplateOut(BaseModel):
 
 
 class TemplateUpdateIn(BaseModel):
-    is_active: bool
+    is_active: bool | None = None
+    subject_line: str | None = None
+    html_body: str | None = None
 
 
 class DailyStatsItem(BaseModel):
@@ -192,6 +197,7 @@ class DigestLogOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    organization_id: str | None = None
     batch_id: str
     channel_id: str
     status: DigestStatus
@@ -213,3 +219,122 @@ class HrmsSyncResponse(BaseModel):
     created: int
     updated: int
     message: str
+
+
+class OrganizationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    slug: str
+    api_key: str
+    company_logo_url: str | None = None
+    business_timezone: str
+    leap_day_policy: str
+    digest_channel_id: str
+    smtp_host: str | None = None
+    smtp_port: int | None = None
+    smtp_username: str | None = None
+    smtp_from_address: str | None = None
+    slack_webhook_url: str | None = None
+    teams_webhook_url: str | None = None
+    is_active: bool
+    is_demo: bool
+    created_at: datetime
+
+
+class OrganizationUpdateIn(BaseModel):
+    name: str | None = None
+    company_logo_url: str | None = None
+    business_timezone: str | None = None
+    leap_day_policy: str | None = None
+    digest_channel_id: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int | None = None
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from_address: str | None = None
+    slack_webhook_url: str | None = None
+    teams_webhook_url: str | None = None
+
+
+class OrganizationCreateIn(BaseModel):
+    name: str
+    slug: str | None = None
+    company_logo_url: str | None = None
+    business_timezone: str = "Asia/Kolkata"
+    leap_day_policy: str = "feb28"
+    is_demo: bool = False
+
+
+class CsvImportRowError(BaseModel):
+    row: int
+    error: str
+
+
+class CsvImportResponse(BaseModel):
+    total_rows: int
+    imported: int
+    updated: int
+    failed: int
+    errors: list[CsvImportRowError] = []
+
+
+class DemoResetResponse(BaseModel):
+    success: bool
+    message: str
+    employee_count: int
+    events_detected: int
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    email: str
+    full_name: str
+    role: str
+    organization_id: str | None = None
+    is_active: bool
+    created_at: datetime
+
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
+
+
+class ApiKeyLoginIn(BaseModel):
+    api_key: str
+
+
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserOut
+    organization: OrganizationOut | None = None
+
+
+class SuperAdminOrgOut(BaseModel):
+    id: str
+    name: str
+    slug: str
+    api_key: str
+    company_logo_url: str | None = None
+    business_timezone: str
+    is_active: bool
+    is_demo: bool
+    employee_count: int
+    event_count: int
+    created_at: datetime
+
+
+class CreateTenantIn(BaseModel):
+    name: str
+    slug: str | None = None
+    admin_email: str
+    admin_name: str
+    admin_password: str
+    business_timezone: str = "Asia/Kolkata"
+    leap_day_policy: str = "feb28"
+

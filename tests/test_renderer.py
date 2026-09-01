@@ -24,6 +24,7 @@ def test_select_variant_anniversary_milestones():
 def test_render_birthday_event_success(db):
     emp = make_employee(db, dob=date(1995, 8, 22), photo_url="https://cdn.example.com/asha.jpg")
     event = EventLog(
+        organization_id=emp.organization_id,
         employee_id=emp.id, event_type=EventType.BIRTHDAY, event_date=date(2026, 8, 22),
         status=EventStatus.PENDING, batch_id="2026-08-22",
     )
@@ -41,6 +42,7 @@ def test_render_birthday_event_success(db):
 def test_render_missing_photo_falls_back_to_default_avatar(db):
     emp = make_employee(db, dob=date(1995, 8, 22), photo_url=None)
     event = EventLog(
+        organization_id=emp.organization_id,
         employee_id=emp.id, event_type=EventType.BIRTHDAY, event_date=date(2026, 8, 22),
         status=EventStatus.PENDING, batch_id="2026-08-22",
     )
@@ -56,6 +58,7 @@ def test_render_missing_photo_falls_back_to_default_avatar(db):
 def test_render_anniversary_selects_5yr_variant(db):
     emp = make_employee(db, doj=date(2021, 8, 22))
     event = EventLog(
+        organization_id=emp.organization_id,
         employee_id=emp.id, event_type=EventType.WORK_ANNIVERSARY, event_date=date(2026, 8, 22),
         years=5, status=EventStatus.PENDING, batch_id="2026-08-22",
     )
@@ -71,12 +74,16 @@ def test_render_anniversary_selects_5yr_variant(db):
 def test_render_falls_back_when_milestone_template_inactive(db):
     """If the 5yr template is deactivated, rendering should fall back to the generic
     anniversary template rather than failing the whole event."""
-    tmpl = db.query(EventTemplate).filter(EventTemplate.variant_key == "anniversary_5yr").first()
+    emp = make_employee(db, doj=date(2021, 8, 22))
+    tmpl = db.query(EventTemplate).filter(
+        EventTemplate.organization_id == emp.organization_id,
+        EventTemplate.variant_key == "anniversary_5yr"
+    ).first()
     tmpl.is_active = False
     db.commit()
 
-    emp = make_employee(db, doj=date(2021, 8, 22))
     event = EventLog(
+        organization_id=emp.organization_id,
         employee_id=emp.id, event_type=EventType.WORK_ANNIVERSARY, event_date=date(2026, 8, 22),
         years=5, status=EventStatus.PENDING, batch_id="2026-08-22",
     )
@@ -90,12 +97,16 @@ def test_render_falls_back_when_milestone_template_inactive(db):
 
 
 def test_render_fails_gracefully_when_no_template_at_all(db):
-    for tmpl in db.query(EventTemplate).filter(EventTemplate.event_type == EventType.BIRTHDAY):
+    emp = make_employee(db, dob=date(1995, 8, 22))
+    for tmpl in db.query(EventTemplate).filter(
+        EventTemplate.organization_id == emp.organization_id,
+        EventTemplate.event_type == EventType.BIRTHDAY
+    ):
         tmpl.is_active = False
     db.commit()
 
-    emp = make_employee(db, dob=date(1995, 8, 22))
     event = EventLog(
+        organization_id=emp.organization_id,
         employee_id=emp.id, event_type=EventType.BIRTHDAY, event_date=date(2026, 8, 22),
         status=EventStatus.PENDING, batch_id="2026-08-22",
     )
@@ -111,6 +122,7 @@ def test_render_fails_gracefully_when_no_template_at_all(db):
 def test_render_escapes_html_in_name_to_prevent_xss(db):
     emp = make_employee(db, name='<script>alert("x")</script>', dob=date(1995, 8, 22))
     event = EventLog(
+        organization_id=emp.organization_id,
         employee_id=emp.id, event_type=EventType.BIRTHDAY, event_date=date(2026, 8, 22),
         status=EventStatus.PENDING, batch_id="2026-08-22",
     )
@@ -127,7 +139,9 @@ def test_render_escapes_html_in_name_to_prevent_xss(db):
 def test_render_missing_placeholder_variable_raises_and_marks_failed(db):
     """A template referencing an undefined variable must fail loudly, never render
     the literal placeholder text into a live email."""
+    emp = make_employee(db, dob=date(1995, 8, 22))
     bad_tmpl = EventTemplate(
+        organization_id=emp.organization_id,
         event_type=EventType.BIRTHDAY,
         variant_key="broken_variant",
         subject_line="Hi {{ nonexistent_field }}",
@@ -135,14 +149,18 @@ def test_render_missing_placeholder_variable_raises_and_marks_failed(db):
         is_active=True,
     )
     db.add(bad_tmpl)
-    for t in db.query(EventTemplate).filter(EventTemplate.event_type == EventType.BIRTHDAY, EventTemplate.variant_key == "default"):
+    for t in db.query(EventTemplate).filter(
+        EventTemplate.organization_id == emp.organization_id,
+        EventTemplate.event_type == EventType.BIRTHDAY,
+        EventTemplate.variant_key == "default"
+    ):
         t.is_active = False
     db.commit()
 
-    # force select_variant to resolve to our broken one by directly testing get_active_template path:
     from app.services.renderer import get_active_template
     import pytest as _pytest
     from app.services.renderer import RenderError
 
     with _pytest.raises(RenderError):
-        get_active_template(db, EventType.BIRTHDAY, "default")
+        get_active_template(db, EventType.BIRTHDAY, "default", organization_id=emp.organization_id)
+

@@ -5,6 +5,7 @@ import { Avatar } from '../components/common/Avatar';
 import { Badge } from '../components/common/Badge';
 import { Drawer } from '../components/common/Drawer';
 import { Modal } from '../components/common/Modal';
+import { CsvImportModal } from '../components/common/CsvImportModal';
 import { Pagination } from '../components/common/Pagination';
 import { EmptyState } from '../components/common/EmptyState';
 import { TableSkeleton } from '../components/common/Skeleton';
@@ -20,6 +21,7 @@ import {
   Clock,
   AlertCircle,
   X,
+  UploadCloud,
 } from 'lucide-react';
 
 export const EmployeesPage: React.FC = () => {
@@ -41,6 +43,7 @@ export const EmployeesPage: React.FC = () => {
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
 
   // Form State
@@ -232,6 +235,14 @@ export const EmployeesPage: React.FC = () => {
               title="Refresh Directory"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsCsvModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-xs transition-colors"
+            >
+              <UploadCloud className="w-4 h-4 text-rose-500" />
+              <span>Import CSV</span>
             </button>
             <button
               type="button"
@@ -830,6 +841,13 @@ export const EmployeesPage: React.FC = () => {
           </div>
         </form>
       </Modal>
+
+      {/* CSV Bulk Import Modal */}
+      <CsvImportModal
+        isOpen={isCsvModalOpen}
+        onClose={() => setIsCsvModalOpen(false)}
+        onSuccess={fetchEmployees}
+      />
     </div>
   );
 };

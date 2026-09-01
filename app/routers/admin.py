@@ -2,15 +2,18 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import DigestLog, EmployeeProfile, EventLog, EventStatus, EventTemplate, EventType
+from app.models import DigestLog, EmployeeProfile, EventLog, EventStatus, EventTemplate, EventType, Organization
 from app.schemas import (
+    CsvImportResponse,
+    CsvImportRowError,
     DailyStatsItem,
+    DemoResetResponse,
     DigestLogOut,
     EmployeeCreateIn,
     EmployeeDetailOut,
@@ -19,6 +22,8 @@ from app.schemas import (
     EventLogOut,
     EventTemplateOut,
     HrmsSyncResponse,
+    OrganizationOut,
+    OrganizationUpdateIn,
     PaginatedDigestsOut,
     PaginatedEmployeesOut,
     ResendResponse,
@@ -28,9 +33,11 @@ from app.schemas import (
     TodayStats,
     UpcomingEventItem,
 )
+from app.services.csv_importer import import_employees_from_csv
+from app.services.demo import reset_demo_organization
 from app.services.hrms_sync import sync_employees
 from app.services.mailer import get_mailer, send_with_retry
-from app.services.pipeline import run_daily_pipeline
+from app.services.pipeline import run_tenant_pipeline
 from app.services.renderer import render_event
 from app.services.scanner import find_due_events
 
@@ -38,9 +45,72 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 settings = get_settings()
 
 
-def require_admin_key(x_api_key: str = Header(...)) -> None:
-    if x_api_key != settings.ADMIN_API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid admin API key")
+def get_current_org(
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+    x_tenant_id: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> Organization:
+    """
+    Resolves the tenant Organization via JWT Bearer Token or API Key.
+    Supports SuperAdmin tenant switching via x-tenant-id header.
+    """
+    from app.routers.auth import get_current_user_and_org
+    _, org = get_current_user_and_org(
+        authorization=authorization,
+        x_api_key=x_api_key,
+        x_tenant_id=x_tenant_id,
+        db=db,
+    )
+    if not org:
+        raise HTTPException(status_code=400, detail="No active organization selected")
+    return org
+
+
+# ---------------------------------------------------------------------------
+# Organization Settings & Profile
+# ---------------------------------------------------------------------------
+
+
+@router.get("/organization", response_model=OrganizationOut)
+def get_organization_profile(
+    org: Organization = Depends(get_current_org),
+):
+    return org
+
+
+@router.patch("/organization", response_model=OrganizationOut)
+def update_organization_profile(
+    payload: OrganizationUpdateIn,
+    org: Organization = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    data = payload.model_dump(exclude_unset=True)
+    for k, v in data.items():
+        setattr(org, k, v)
+    db.commit()
+    db.refresh(org)
+    return org
+
+
+# ---------------------------------------------------------------------------
+# Demo Sandbox Actions
+# ---------------------------------------------------------------------------
+
+
+@router.post("/demo/reset", response_model=DemoResetResponse)
+def reset_demo(
+    org: Organization = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    """Resets the demo organization with realistic mock employees & fresh scans."""
+    emp_count, events_detected = reset_demo_organization(db, org.id)
+    return DemoResetResponse(
+        success=True,
+        message="Demo organization successfully reset with fresh sample data",
+        employee_count=emp_count,
+        events_detected=events_detected,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -48,17 +118,16 @@ def require_admin_key(x_api_key: str = Header(...)) -> None:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/scan/trigger", response_model=ScanTriggerResponse, dependencies=[Depends(require_admin_key)])
+@router.post("/scan/trigger", response_model=ScanTriggerResponse)
 def trigger_scan(
     scan_date: date | None = Query(default=None, description="Defaults to today"),
+    org: Organization = Depends(get_current_org),
     db: Session = Depends(get_db),
 ):
     """
-    Manually runs the full pipeline (scan -> render -> send -> digest) for a given
-    date. Uses the exact same code path as the scheduled job, so this is also
-    the right tool for re-running a failed day or backfilling a missed one.
+    Manually runs the full pipeline (scan -> render -> send -> digest) for the current organization.
     """
-    result = run_daily_pipeline(db, scan_date=scan_date)
+    result = run_tenant_pipeline(db, org.id, scan_date=scan_date)
     return ScanTriggerResponse(**result.__dict__)
 
 
@@ -67,14 +136,15 @@ def trigger_scan(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/events", response_model=list[EventLogOut], dependencies=[Depends(require_admin_key)])
+@router.get("/events", response_model=list[EventLogOut])
 def list_events(
     batch_id: str | None = Query(default=None),
     status: EventStatus | None = Query(default=None),
     employee_id: str | None = Query(default=None),
+    org: Organization = Depends(get_current_org),
     db: Session = Depends(get_db),
 ):
-    q = db.query(EventLog)
+    q = db.query(EventLog).filter(EventLog.organization_id == org.id)
     if batch_id:
         q = q.filter(EventLog.batch_id == batch_id)
     if status:
@@ -89,9 +159,13 @@ def list_events(
     return events
 
 
-@router.get("/events/{event_id}", response_model=EventLogOut, dependencies=[Depends(require_admin_key)])
-def get_event(event_id: str, db: Session = Depends(get_db)):
-    event = db.get(EventLog, event_id)
+@router.get("/events/{event_id}", response_model=EventLogOut)
+def get_event(
+    event_id: str,
+    org: Organization = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    event = db.query(EventLog).filter(EventLog.id == event_id, EventLog.organization_id == org.id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     if event.employee:
@@ -99,13 +173,13 @@ def get_event(event_id: str, db: Session = Depends(get_db)):
     return event
 
 
-@router.post("/events/{event_id}/resend", response_model=ResendResponse, dependencies=[Depends(require_admin_key)])
-def resend_event(event_id: str, db: Session = Depends(get_db)):
-    """
-    Retries a FAILED event. If it was never rendered, renders first. Sending an
-    already-SENT event is refused to avoid double-emailing someone.
-    """
-    event = db.get(EventLog, event_id)
+@router.post("/events/{event_id}/resend", response_model=ResendResponse)
+def resend_event(
+    event_id: str,
+    org: Organization = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    event = db.query(EventLog).filter(EventLog.id == event_id, EventLog.organization_id == org.id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
@@ -143,19 +217,20 @@ def resend_event(event_id: str, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
-# Employees
+# Employees & CSV Import
 # ---------------------------------------------------------------------------
 
 
-@router.get("/employees", response_model=PaginatedEmployeesOut, dependencies=[Depends(require_admin_key)])
+@router.get("/employees", response_model=PaginatedEmployeesOut)
 def list_employees(
     search: str | None = Query(default=None),
     is_active: bool | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    org: Organization = Depends(get_current_org),
     db: Session = Depends(get_db),
 ):
-    q = db.query(EmployeeProfile)
+    q = db.query(EmployeeProfile).filter(EmployeeProfile.organization_id == org.id)
     if is_active is not None:
         q = q.filter(EmployeeProfile.is_active.is_(is_active))
     if search:
@@ -174,15 +249,22 @@ def list_employees(
     return PaginatedEmployeesOut(items=items, total=total, limit=limit, offset=offset)
 
 
-@router.get("/employees/{employee_id}", response_model=EmployeeDetailOut, dependencies=[Depends(require_admin_key)])
-def get_employee(employee_id: str, db: Session = Depends(get_db)):
-    emp = db.get(EmployeeProfile, employee_id)
+@router.get("/employees/{employee_id}", response_model=EmployeeDetailOut)
+def get_employee(
+    employee_id: str,
+    org: Organization = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    emp = db.query(EmployeeProfile).filter(
+        EmployeeProfile.id == employee_id,
+        EmployeeProfile.organization_id == org.id,
+    ).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
 
     recent_events = (
         db.query(EventLog)
-        .filter(EventLog.employee_id == employee_id)
+        .filter(EventLog.employee_id == employee_id, EventLog.organization_id == org.id)
         .order_by(EventLog.event_date.desc(), EventLog.created_at.desc())
         .limit(50)
         .all()
@@ -192,6 +274,7 @@ def get_employee(employee_id: str, db: Session = Depends(get_db)):
 
     return EmployeeDetailOut(
         id=emp.id,
+        organization_id=emp.organization_id,
         employee_code=emp.employee_code,
         full_name=emp.full_name,
         preferred_name=emp.preferred_name,
@@ -208,30 +291,50 @@ def get_employee(employee_id: str, db: Session = Depends(get_db)):
     )
 
 
-@router.post("/employees", response_model=EmployeeOut, status_code=201, dependencies=[Depends(require_admin_key)])
-def create_employee(payload: EmployeeCreateIn, db: Session = Depends(get_db)):
-    existing = db.query(EmployeeProfile).filter(EmployeeProfile.employee_code == payload.employee_code).first()
+@router.post("/employees", response_model=EmployeeOut, status_code=201)
+def create_employee(
+    payload: EmployeeCreateIn,
+    org: Organization = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    existing = db.query(EmployeeProfile).filter(
+        EmployeeProfile.organization_id == org.id,
+        EmployeeProfile.employee_code == payload.employee_code,
+    ).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Employee code already exists")
+        raise HTTPException(status_code=400, detail="Employee code already exists in this organization")
 
-    emp = EmployeeProfile(**payload.model_dump())
+    emp_data = payload.model_dump()
+    emp_data["organization_id"] = org.id
+    emp = EmployeeProfile(**emp_data)
     db.add(emp)
     db.commit()
     db.refresh(emp)
     return emp
 
 
-@router.patch("/employees/{employee_id}", response_model=EmployeeOut, dependencies=[Depends(require_admin_key)])
-def update_employee(employee_id: str, payload: EmployeeUpdateIn, db: Session = Depends(get_db)):
-    emp = db.get(EmployeeProfile, employee_id)
+@router.patch("/employees/{employee_id}", response_model=EmployeeOut)
+def update_employee(
+    employee_id: str,
+    payload: EmployeeUpdateIn,
+    org: Organization = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    emp = db.query(EmployeeProfile).filter(
+        EmployeeProfile.id == employee_id,
+        EmployeeProfile.organization_id == org.id,
+    ).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
 
     data = payload.model_dump(exclude_unset=True)
     if "employee_code" in data and data["employee_code"] != emp.employee_code:
-        conflict = db.query(EmployeeProfile).filter(EmployeeProfile.employee_code == data["employee_code"]).first()
+        conflict = db.query(EmployeeProfile).filter(
+            EmployeeProfile.organization_id == org.id,
+            EmployeeProfile.employee_code == data["employee_code"],
+        ).first()
         if conflict:
-            raise HTTPException(status_code=400, detail="Employee code already exists")
+            raise HTTPException(status_code=400, detail="Employee code already exists in this organization")
 
     for k, v in data.items():
         setattr(emp, k, v)
@@ -241,23 +344,64 @@ def update_employee(employee_id: str, payload: EmployeeUpdateIn, db: Session = D
     return emp
 
 
+@router.post("/employees/upload-csv", response_model=CsvImportResponse)
+async def upload_employees_csv(
+    file: UploadFile = File(...),
+    org: Organization = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    """Bulk imports/updates employees via CSV with automatic field mapping."""
+    content = await file.read()
+    imported, updated, failed, raw_errors = import_employees_from_csv(db, org.id, content)
+    db.commit()
+
+    errors = [CsvImportRowError(row=e["row"], error=e["error"]) for e in raw_errors]
+    return CsvImportResponse(
+        total_rows=imported + updated + failed,
+        imported=imported,
+        updated=updated,
+        failed=failed,
+        errors=errors,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Templates
 # ---------------------------------------------------------------------------
 
 
-@router.get("/templates", response_model=list[EventTemplateOut], dependencies=[Depends(require_admin_key)])
-def list_templates(db: Session = Depends(get_db)):
-    return db.query(EventTemplate).order_by(EventTemplate.event_type.asc(), EventTemplate.variant_key.asc()).all()
+@router.get("/templates", response_model=list[EventTemplateOut])
+def list_templates(
+    org: Organization = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(EventTemplate)
+        .filter(EventTemplate.organization_id == org.id)
+        .order_by(EventTemplate.event_type.asc(), EventTemplate.variant_key.asc())
+        .all()
+    )
 
 
-@router.patch("/templates/{template_id}", response_model=EventTemplateOut, dependencies=[Depends(require_admin_key)])
-def update_template(template_id: str, payload: TemplateUpdateIn, db: Session = Depends(get_db)):
-    template = db.get(EventTemplate, template_id)
+@router.patch("/templates/{template_id}", response_model=EventTemplateOut)
+def update_template(
+    template_id: str,
+    payload: TemplateUpdateIn,
+    org: Organization = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    template = db.query(EventTemplate).filter(
+        EventTemplate.id == template_id,
+        EventTemplate.organization_id == org.id,
+    ).first()
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
 
-    template.is_active = payload.is_active
+    data = payload.model_dump(exclude_unset=True)
+    for k, v in data.items():
+        if v is not None:
+            setattr(template, k, v)
+
     db.commit()
     db.refresh(template)
     return template
@@ -268,20 +412,30 @@ def update_template(template_id: str, payload: TemplateUpdateIn, db: Session = D
 # ---------------------------------------------------------------------------
 
 
-@router.get("/stats/summary", response_model=StatsSummaryResponse, dependencies=[Depends(require_admin_key)])
+@router.get("/stats/summary", response_model=StatsSummaryResponse)
 def get_stats_summary(
     days: int = Query(default=30, ge=1, le=365),
+    org: Organization = Depends(get_current_org),
     db: Session = Depends(get_db),
 ):
-    total_employees = db.query(EmployeeProfile).count()
-    active_employees = db.query(EmployeeProfile).filter(EmployeeProfile.is_active.is_(True)).count()
+    total_employees = db.query(EmployeeProfile).filter(EmployeeProfile.organization_id == org.id).count()
+    active_employees = (
+        db.query(EmployeeProfile)
+        .filter(EmployeeProfile.organization_id == org.id, EmployeeProfile.is_active.is_(True))
+        .count()
+    )
     inactive_employees = total_employees - active_employees
 
     today = date.today()
     today_batch = today.isoformat()
 
     # Today's event stats
-    today_rows = db.query(EventLog.status, func.count(EventLog.id)).filter(EventLog.batch_id == today_batch).group_by(EventLog.status).all()
+    today_rows = (
+        db.query(EventLog.status, func.count(EventLog.id))
+        .filter(EventLog.organization_id == org.id, EventLog.batch_id == today_batch)
+        .group_by(EventLog.status)
+        .all()
+    )
     today_counts = {status: count for status, count in today_rows}
     today_stats = TodayStats(
         sent=today_counts.get(EventStatus.SENT, 0),
@@ -296,7 +450,11 @@ def get_stats_summary(
 
     log_rows = (
         db.query(EventLog.batch_id, EventLog.status, func.count(EventLog.id))
-        .filter(EventLog.event_date >= start_date, EventLog.event_date <= today)
+        .filter(
+            EventLog.organization_id == org.id,
+            EventLog.event_date >= start_date,
+            EventLog.event_date <= today,
+        )
         .group_by(EventLog.batch_id, EventLog.status)
         .all()
     )
@@ -319,12 +477,12 @@ def get_stats_summary(
             )
         )
 
-    # Upcoming events in next 7 days (today + 1 to today + 7)
+    # Upcoming events in next 7 days
     upcoming_events_7d: list[UpcomingEventItem] = []
     emp_cache: dict[str, EmployeeProfile] = {}
     for i in range(1, 8):
         future_date = today + timedelta(days=i)
-        due = find_due_events(db, future_date)
+        due = find_due_events(db, future_date, organization_id=org.id, leap_day_policy=org.leap_day_policy)
         for e in due:
             if e.employee_id not in emp_cache:
                 emp = db.get(EmployeeProfile, e.employee_id)
@@ -360,8 +518,11 @@ def get_stats_summary(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/hrms-sync/trigger", response_model=HrmsSyncResponse, dependencies=[Depends(require_admin_key)])
-def trigger_hrms_sync(db: Session = Depends(get_db)):
+@router.post("/hrms-sync/trigger", response_model=HrmsSyncResponse)
+def trigger_hrms_sync(
+    org: Organization = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
     created, updated = sync_employees(db)
     return HrmsSyncResponse(
         created=created,
@@ -375,21 +536,30 @@ def trigger_hrms_sync(db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/digests", response_model=PaginatedDigestsOut, dependencies=[Depends(require_admin_key)])
+@router.get("/digests", response_model=PaginatedDigestsOut)
 def list_digests(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    org: Organization = Depends(get_current_org),
     db: Session = Depends(get_db),
 ):
-    q = db.query(DigestLog)
+    q = db.query(DigestLog).filter(DigestLog.organization_id == org.id)
     total = q.count()
     items = q.order_by(DigestLog.created_at.desc()).offset(offset).limit(limit).all()
     return PaginatedDigestsOut(items=items, total=total, limit=limit, offset=offset)
 
 
-@router.get("/digests/{batch_id}", response_model=DigestLogOut, dependencies=[Depends(require_admin_key)])
-def get_digest(batch_id: str, db: Session = Depends(get_db)):
-    digest = db.query(DigestLog).filter(DigestLog.batch_id == batch_id).first()
+@router.get("/digests/{batch_id}", response_model=DigestLogOut)
+def get_digest(
+    batch_id: str,
+    org: Organization = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    digest = db.query(DigestLog).filter(
+        DigestLog.batch_id == batch_id,
+        DigestLog.organization_id == org.id,
+    ).first()
     if not digest:
         raise HTTPException(status_code=404, detail="No digest for this batch_id")
     return digest
+

@@ -9,10 +9,12 @@ import { EventsPage } from './pages/EventsPage';
 import { EmployeesPage } from './pages/EmployeesPage';
 import { DigestsPage } from './pages/DigestsPage';
 import { TemplatesPage } from './pages/TemplatesPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { SuperAdminPage } from './pages/SuperAdminPage';
 
 const AppContent: React.FC = () => {
-  const { isAuthenticated } = useAuth();
-  const [activeTab, setActiveTab] = useState<NavTab>('overview');
+  const { isAuthenticated, isSuperAdmin } = useAuth();
+  const [activeTab, setActiveTab] = useState<NavTab>(() => (isSuperAdmin ? 'superadmin' : 'overview'));
   const [refreshKey, setRefreshKey] = useState(0);
 
   if (!isAuthenticated) {
@@ -25,6 +27,13 @@ const AppContent: React.FC = () => {
 
   const renderActivePage = () => {
     switch (activeTab) {
+      case 'superadmin':
+        return (
+          <SuperAdminPage
+            key={refreshKey}
+            onSwitchToTenant={() => setActiveTab('overview')}
+          />
+        );
       case 'overview':
         return (
           <OverviewPage
@@ -43,6 +52,8 @@ const AppContent: React.FC = () => {
         return <DigestsPage key={refreshKey} />;
       case 'templates':
         return <TemplatesPage key={refreshKey} />;
+      case 'settings':
+        return <SettingsPage key={refreshKey} />;
       default:
         return <OverviewPage key={refreshKey} onNavigateTab={(tab) => setActiveTab(tab)} onOpenScanModal={() => {}} />;
     }

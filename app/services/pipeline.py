@@ -13,7 +13,7 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import DigestLog, DigestStatus, EmployeeProfile, EventLog, EventStatus
+from app.models import DigestLog, DigestStatus, EmployeeProfile, EventLog, EventStatus, Organization
 from app.services import digest as digest_service
 from app.services import scanner
 from app.services.mailer import BaseMailer, get_mailer, send_with_retry
@@ -34,38 +34,40 @@ class PipelineResult:
     digest_status: str
 
 
-def _render_pending(db: Session, batch_id: str) -> None:
+def _render_pending(db: Session, batch_id: str, organization_id: str | None = None) -> None:
     """
     Renders anything not yet rendered: fresh PENDING rows, plus any row that
-    previously FAILED at the rendering stage (no rendered_html yet) — so a
-    transient issue (e.g. a template briefly deactivated) self-heals on the
-    next scheduled/manual run without needing an explicit admin resend.
-    Rows that already have rendered_html (i.e. failed at the SEND stage) are
-    left alone here; retrying those is _send_individual_emails's job.
+    previously FAILED at the rendering stage (no rendered_html yet).
     """
-    candidates = db.query(EventLog).filter(
+    q = db.query(EventLog).filter(
         EventLog.batch_id == batch_id,
         EventLog.status.in_([EventStatus.PENDING, EventStatus.FAILED]),
         EventLog.rendered_html.is_(None),
-    ).all()
+    )
+    if organization_id:
+        q = q.filter(EventLog.organization_id == organization_id)
+
+    candidates = q.all()
     for event in candidates:
         render_event(db, event)
     db.flush()
 
 
-def _send_individual_emails(db: Session, batch_id: str, mailer: BaseMailer) -> None:
+def _send_individual_emails(
+    db: Session, batch_id: str, mailer: BaseMailer, organization_id: str | None = None
+) -> None:
     """
-    Sends anything rendered-but-not-sent: fresh RENDERED rows, plus rows that
-    previously FAILED at the send stage (rendered_html already present) — so a
-    provider outage self-heals on the next pipeline run instead of silently
-    leaving people un-notified until someone remembers to hit the resend endpoint.
-    Rows already SENT are never touched, guaranteeing no duplicate emails.
+    Sends anything rendered-but-not-sent for this batch and organization.
     """
-    rendered = db.query(EventLog).filter(
+    q = db.query(EventLog).filter(
         EventLog.batch_id == batch_id,
         EventLog.status.in_([EventStatus.RENDERED, EventStatus.FAILED]),
         EventLog.rendered_html.isnot(None),
-    ).all()
+    )
+    if organization_id:
+        q = q.filter(EventLog.organization_id == organization_id)
+
+    rendered = q.all()
 
     for event in rendered:
         employee = event.employee or db.get(EmployeeProfile, event.employee_id)
@@ -88,16 +90,35 @@ def _send_individual_emails(db: Session, batch_id: str, mailer: BaseMailer) -> N
     db.flush()
 
 
-def _send_digest(db: Session, batch_id: str, batch_date: date, mailer: BaseMailer) -> str:
-    events = digest_service.get_renderable_events_for_batch(db, batch_id)
+def _send_digest(
+    db: Session,
+    batch_id: str,
+    batch_date: date,
+    mailer: BaseMailer,
+    org: Organization | None = None,
+) -> str:
+    org_id = org.id if org else None
+    events = digest_service.get_renderable_events_for_batch(db, batch_id, organization_id=org_id)
 
-    existing = db.query(DigestLog).filter(DigestLog.batch_id == batch_id).first()
+    q = db.query(DigestLog).filter(DigestLog.batch_id == batch_id)
+    if org_id:
+        q = q.filter(DigestLog.organization_id == org_id)
+    existing = q.first()
+
     if existing and existing.status == DigestStatus.SENT:
         # Already sent for this batch — never double-post the team digest.
         return existing.status.value
 
+    channel_id = (org.digest_channel_id if org else None) or settings.DEFAULT_DIGEST_CHANNEL_ID
+    company_name = (org.name if org else None) or settings.COMPANY_NAME
+    company_logo = (org.company_logo_url if org else None) or settings.COMPANY_LOGO_URL
+
     if not events:
-        log = existing or DigestLog(batch_id=batch_id, channel_id=settings.DEFAULT_DIGEST_CHANNEL_ID)
+        log = existing or DigestLog(
+            organization_id=org.id if org else "default",
+            batch_id=batch_id,
+            channel_id=channel_id,
+        )
         log.status = DigestStatus.EMPTY_SKIPPED
         log.event_count = 0
         if not existing:
@@ -105,15 +126,20 @@ def _send_digest(db: Session, batch_id: str, batch_date: date, mailer: BaseMaile
         db.flush()
         return log.status.value
 
-    html = digest_service.render_digest(events, batch_date)
-    channel_id = settings.DEFAULT_DIGEST_CHANNEL_ID
+    html = digest_service.render_digest(
+        events, batch_date, company_name=company_name, company_logo_url=company_logo
+    )
 
-    log = existing or DigestLog(batch_id=batch_id, channel_id=channel_id)
+    log = existing or DigestLog(
+        organization_id=org.id if org else "default",
+        batch_id=batch_id,
+        channel_id=channel_id,
+    )
     log.rendered_html = html
     log.event_count = len(events)
 
     success, error = send_with_retry(
-        mailer, channel_id, f"Celebrations today at {settings.COMPANY_NAME}", html
+        mailer, channel_id, f"Celebrations today at {company_name}", html
     )
     if success:
         log.status = DigestStatus.SENT
@@ -130,20 +156,31 @@ def _send_digest(db: Session, batch_id: str, batch_date: date, mailer: BaseMaile
     return log.status.value
 
 
-def run_daily_pipeline(db: Session, scan_date: date | None = None, mailer: BaseMailer | None = None) -> PipelineResult:
+def run_tenant_pipeline(
+    db: Session,
+    organization_id: str,
+    scan_date: date | None = None,
+    mailer: BaseMailer | None = None,
+) -> PipelineResult:
+    """Runs the full scan -> render -> send -> digest pipeline for a single tenant."""
     scan_date = scan_date or date.today()
     mailer = mailer or get_mailer()
 
-    detected, batch_id = scanner.run_scan(db, scan_date)
+    org = db.get(Organization, organization_id)
+    leap_policy = org.leap_day_policy if org else settings.LEAP_DAY_POLICY
+
+    detected, batch_id = scanner.run_scan(
+        db, scan_date, organization_id=organization_id, leap_day_policy=leap_policy
+    )
     db.commit()
 
-    _render_pending(db, batch_id)
+    _render_pending(db, batch_id, organization_id=organization_id)
     db.commit()
 
-    _send_individual_emails(db, batch_id, mailer)
+    _send_individual_emails(db, batch_id, mailer, organization_id=organization_id)
     db.commit()
 
-    digest_status = _send_digest(db, batch_id, scan_date, mailer)
+    digest_status = _send_digest(db, batch_id, scan_date, mailer, org=org)
     db.commit()
 
     counts = {
@@ -152,7 +189,11 @@ def run_daily_pipeline(db: Session, scan_date: date | None = None, mailer: BaseM
         EventStatus.SKIPPED: 0,
         EventStatus.RENDERED: 0,
     }
-    rows = db.query(EventLog.status).filter(EventLog.batch_id == batch_id).all()
+    rows = (
+        db.query(EventLog.status)
+        .filter(EventLog.batch_id == batch_id, EventLog.organization_id == organization_id)
+        .all()
+    )
     for (status,) in rows:
         counts[status] = counts.get(status, 0) + 1
 
@@ -165,5 +206,43 @@ def run_daily_pipeline(db: Session, scan_date: date | None = None, mailer: BaseM
         skipped=counts.get(EventStatus.SKIPPED, 0),
         digest_status=digest_status,
     )
-    logger.info("Pipeline complete for batch %s: %s", batch_id, result)
+    logger.info("Pipeline complete for org %s batch %s: %s", organization_id, batch_id, result)
     return result
+
+
+def run_daily_pipeline(
+    db: Session,
+    scan_date: date | None = None,
+    mailer: BaseMailer | None = None,
+    organization_id: str | None = None,
+) -> PipelineResult:
+    """
+    Main pipeline entrypoint. If organization_id is provided, runs for that tenant.
+    Otherwise runs for all active organizations.
+    """
+    scan_date = scan_date or date.today()
+    mailer = mailer or get_mailer()
+
+    if organization_id:
+        return run_tenant_pipeline(db, organization_id, scan_date=scan_date, mailer=mailer)
+
+    orgs = db.query(Organization).filter(Organization.is_active == True).all()
+    if not orgs:
+        from app.seed import seed_default_organization
+        default_org = seed_default_organization(db)
+        orgs = [default_org]
+
+    last_result = None
+    for org in orgs:
+        last_result = run_tenant_pipeline(db, org.id, scan_date=scan_date, mailer=mailer)
+
+    return last_result or PipelineResult(
+        batch_id=scan_date.isoformat(),
+        detected=0,
+        rendered=0,
+        sent=0,
+        failed=0,
+        skipped=0,
+        digest_status=DigestStatus.EMPTY_SKIPPED.value,
+    )
+
