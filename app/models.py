@@ -137,7 +137,16 @@ class EmployeeProfile(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     last_synced_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+    birthday_template_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("event_template.id", ondelete="SET NULL"), nullable=True
+    )
+    anniversary_template_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("event_template.id", ondelete="SET NULL"), nullable=True
+    )
+
     organization: Mapped["Organization"] = relationship()
+    birthday_template: Mapped["EventTemplate | None"] = relationship(foreign_keys=[birthday_template_id])
+    anniversary_template: Mapped["EventTemplate | None"] = relationship(foreign_keys=[anniversary_template_id])
 
     __table_args__ = (
         UniqueConstraint("organization_id", "employee_code", name="uq_org_employee_code"),
@@ -157,10 +166,12 @@ class EventTemplate(Base):
         String(36), ForeignKey("organization.id", ondelete="CASCADE"), index=True
     )
     event_type: Mapped[EventType] = mapped_column(Enum(EventType), index=True)
+    name: Mapped[str] = mapped_column(String(255), default="")
     variant_key: Mapped[str] = mapped_column(String(64), default="default")
     subject_line: Mapped[str] = mapped_column(String(500))
     html_body: Mapped[str] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     organization: Mapped["Organization"] = relationship()

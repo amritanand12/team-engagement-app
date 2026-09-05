@@ -12,28 +12,36 @@ settings = get_settings()
 
 DEFAULT_TEMPLATES = [
     dict(
+        name="Standard Birthday Celebration",
         event_type=EventType.BIRTHDAY,
         variant_key="default",
         subject_line="🎉 Happy Birthday, {{ name }}!",
         filename="birthday_default.html",
+        is_default=True,
     ),
     dict(
+        name="Standard Work Anniversary",
         event_type=EventType.WORK_ANNIVERSARY,
         variant_key="anniversary_default",
         subject_line="🎊 Congrats on {{ years }} year{{ 's' if years != 1 else '' }}, {{ name }}!",
         filename="anniversary_default.html",
+        is_default=True,
     ),
     dict(
+        name="5-Year Milestone Celebration",
         event_type=EventType.WORK_ANNIVERSARY,
         variant_key="anniversary_5yr",
         subject_line="🏅 {{ name }}, 5 years at {{ company_name }}!",
         filename="anniversary_5yr.html",
+        is_default=False,
     ),
     dict(
+        name="10-Year Decade Celebration",
         event_type=EventType.WORK_ANNIVERSARY,
         variant_key="anniversary_10yr",
         subject_line="👑 {{ name }}, a decade at {{ company_name }}!",
         filename="anniversary_10yr.html",
+        is_default=False,
     ),
 ]
 
@@ -48,21 +56,26 @@ def seed_default_templates(db: Session, organization_id: str) -> int:
                 EventTemplate.organization_id == organization_id,
                 EventTemplate.event_type == tpl["event_type"],
                 EventTemplate.variant_key == tpl["variant_key"],
-                EventTemplate.is_active.is_(True),
             )
             .first()
         )
         if existing:
+            if not existing.name:
+                existing.name = tpl["name"]
+            if tpl.get("is_default") and not existing.is_default:
+                existing.is_default = True
             continue
         html_body = load_seed_template_file(tpl["filename"])
         db.add(
             EventTemplate(
                 organization_id=organization_id,
+                name=tpl["name"],
                 event_type=tpl["event_type"],
                 variant_key=tpl["variant_key"],
                 subject_line=tpl["subject_line"],
                 html_body=html_body,
                 is_active=True,
+                is_default=tpl.get("is_default", False),
             )
         )
         created += 1

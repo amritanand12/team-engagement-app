@@ -6,6 +6,10 @@ import {
   EmployeeUpdatePayload,
   EventLog,
   EventTemplate,
+  TemplateCreatePayload,
+  TemplateUpdatePayload,
+  TemplatePreviewResponse,
+  EventType,
   HrmsSyncResponse,
   PaginatedDigests,
   PaginatedEmployees,
@@ -207,19 +211,33 @@ export const api = {
     return apiFetch<EventTemplate[]>('/admin/templates');
   },
 
-  updateTemplate: async (templateId: string, isActive: boolean): Promise<EventTemplate> => {
-    return apiFetch<EventTemplate>(`/admin/templates/${templateId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ is_active: isActive }),
+  createTemplate: async (payload: TemplateCreatePayload): Promise<EventTemplate> => {
+    return apiFetch<EventTemplate>('/admin/templates', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     });
   },
 
-  updateTemplateFull: async (
-    templateId: string,
-    payload: { is_active?: boolean; subject_line?: string; html_body?: string }
-  ): Promise<EventTemplate> => {
+  updateTemplate: async (templateId: string, payload: TemplateUpdatePayload): Promise<EventTemplate> => {
     return apiFetch<EventTemplate>(`/admin/templates/${templateId}`, {
       method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  deleteTemplate: async (templateId: string): Promise<{ message: string; template_id: string }> => {
+    return apiFetch<{ message: string; template_id: string }>(`/admin/templates/${templateId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  previewTemplate: async (payload: {
+    subject_line: string;
+    html_body: string;
+    event_type: EventType;
+  }): Promise<TemplatePreviewResponse> => {
+    return apiFetch<TemplatePreviewResponse>('/admin/templates/preview', {
+      method: 'POST',
       body: JSON.stringify(payload),
     });
   },

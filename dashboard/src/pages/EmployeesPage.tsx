@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api/client';
-import { Employee, EmployeeCreatePayload, EmployeeDetail, EmployeeUpdatePayload } from '../types';
+import { Employee, EmployeeCreatePayload, EmployeeDetail, EmployeeUpdatePayload, EventTemplate } from '../types';
 import { Avatar } from '../components/common/Avatar';
 import { Badge } from '../components/common/Badge';
 import { Drawer } from '../components/common/Drawer';
@@ -45,6 +45,11 @@ export const EmployeesPage: React.FC = () => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const [availableTemplates, setAvailableTemplates] = useState<EventTemplate[]>([]);
+
+  useEffect(() => {
+    api.getTemplates().then(setAvailableTemplates).catch(() => {});
+  }, []);
 
   // Form State
   const [formData, setFormData] = useState<EmployeeCreatePayload>({
@@ -57,6 +62,8 @@ export const EmployeesPage: React.FC = () => {
     date_of_joining: '',
     department: '',
     team_channel_id: '',
+    birthday_template_id: null,
+    anniversary_template_id: null,
     is_active: true,
   });
   const [formSubmitting, setFormSubmitting] = useState(false);
@@ -118,8 +125,11 @@ export const EmployeesPage: React.FC = () => {
       date_of_joining: '',
       department: '',
       team_channel_id: '',
+      birthday_template_id: null,
+      anniversary_template_id: null,
       is_active: true,
     });
+    api.getTemplates().then(setAvailableTemplates).catch(() => {});
     setFormError(null);
     setIsCreateModalOpen(true);
   };
@@ -137,8 +147,11 @@ export const EmployeesPage: React.FC = () => {
       date_of_joining: emp.date_of_joining || '',
       department: emp.department || '',
       team_channel_id: emp.team_channel_id || '',
+      birthday_template_id: emp.birthday_template_id || null,
+      anniversary_template_id: emp.anniversary_template_id || null,
       is_active: emp.is_active,
     });
+    api.getTemplates().then(setAvailableTemplates).catch(() => {});
     setFormError(null);
     setIsEditModalOpen(true);
   };
@@ -166,6 +179,8 @@ export const EmployeesPage: React.FC = () => {
         date_of_joining: formData.date_of_joining || null,
         department: formData.department?.trim() || null,
         team_channel_id: formData.team_channel_id?.trim() || null,
+        birthday_template_id: formData.birthday_template_id || null,
+        anniversary_template_id: formData.anniversary_template_id || null,
         is_active: formData.is_active,
       };
 
@@ -198,6 +213,8 @@ export const EmployeesPage: React.FC = () => {
         date_of_joining: formData.date_of_joining || null,
         department: formData.department?.trim() || null,
         team_channel_id: formData.team_channel_id?.trim() || null,
+        birthday_template_id: formData.birthday_template_id || null,
+        anniversary_template_id: formData.anniversary_template_id || null,
         is_active: formData.is_active,
       };
 
@@ -670,6 +687,56 @@ export const EmployeesPage: React.FC = () => {
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 text-xs"
               />
             </div>
+
+            <div>
+              <label className="block font-semibold uppercase text-slate-700 mb-1">
+                Birthday Email Template
+              </label>
+              <select
+                value={formData.birthday_template_id || ''}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    birthday_template_id: e.target.value ? e.target.value : null,
+                  })
+                }
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 text-xs"
+              >
+                <option value="">(Use Organization Default Template)</option>
+                {availableTemplates
+                  .filter((t) => t.event_type === 'birthday' && t.is_active)
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name || t.variant_key} {t.is_default ? '⭐ (Default)' : ''}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block font-semibold uppercase text-slate-700 mb-1">
+                Anniversary Email Template
+              </label>
+              <select
+                value={formData.anniversary_template_id || ''}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    anniversary_template_id: e.target.value ? e.target.value : null,
+                  })
+                }
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 text-xs"
+              >
+                <option value="">(Use Organization Default Template)</option>
+                {availableTemplates
+                  .filter((t) => t.event_type === 'work_anniversary' && t.is_active)
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name || t.variant_key} {t.is_default ? '⭐ (Default)' : ''}
+                    </option>
+                  ))}
+              </select>
+            </div>
           </div>
 
           <div className="flex items-center gap-2 pt-2">
@@ -807,6 +874,56 @@ export const EmployeesPage: React.FC = () => {
                 onChange={(e) => setFormData({ ...formData, date_of_joining: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 text-xs"
               />
+            </div>
+
+            <div>
+              <label className="block font-semibold uppercase text-slate-700 mb-1">
+                Birthday Email Template
+              </label>
+              <select
+                value={formData.birthday_template_id || ''}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    birthday_template_id: e.target.value ? e.target.value : null,
+                  })
+                }
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 text-xs"
+              >
+                <option value="">(Use Organization Default Template)</option>
+                {availableTemplates
+                  .filter((t) => t.event_type === 'birthday' && t.is_active)
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name || t.variant_key} {t.is_default ? '⭐ (Default)' : ''}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block font-semibold uppercase text-slate-700 mb-1">
+                Anniversary Email Template
+              </label>
+              <select
+                value={formData.anniversary_template_id || ''}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    anniversary_template_id: e.target.value ? e.target.value : null,
+                  })
+                }
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 text-xs"
+              >
+                <option value="">(Use Organization Default Template)</option>
+                {availableTemplates
+                  .filter((t) => t.event_type === 'work_anniversary' && t.is_active)
+                  .map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name || t.variant_key} {t.is_default ? '⭐ (Default)' : ''}
+                    </option>
+                  ))}
+              </select>
             </div>
           </div>
 

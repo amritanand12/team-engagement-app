@@ -17,6 +17,8 @@ export interface Employee {
   manager_id: string | null;
   team_channel_id: string | null;
   is_active: boolean;
+  birthday_template_id: string | null;
+  anniversary_template_id: string | null;
   last_synced_at: string | null;
 }
 
@@ -31,6 +33,8 @@ export interface EmployeeCreatePayload {
   department?: string | null;
   manager_id?: string | null;
   team_channel_id?: string | null;
+  birthday_template_id?: string | null;
+  anniversary_template_id?: string | null;
   is_active?: boolean;
 }
 
@@ -45,6 +49,8 @@ export interface EmployeeUpdatePayload {
   department?: string | null;
   manager_id?: string | null;
   team_channel_id?: string | null;
+  birthday_template_id?: string | null;
+  anniversary_template_id?: string | null;
   is_active?: boolean;
 }
 
@@ -79,12 +85,37 @@ export interface EmployeeDetail extends Employee {
 
 export interface EventTemplate {
   id: string;
+  name?: string;
   event_type: EventType;
   variant_key: string;
   subject_line: string;
   html_body: string;
   is_active: boolean;
+  is_default: boolean;
   created_at: string;
+}
+
+export interface TemplateCreatePayload {
+  name: string;
+  event_type: EventType;
+  subject_line: string;
+  html_body: string;
+  variant_key?: string;
+  is_default?: boolean;
+  is_active?: boolean;
+}
+
+export interface TemplateUpdatePayload {
+  name?: string;
+  subject_line?: string;
+  html_body?: string;
+  is_default?: boolean;
+  is_active?: boolean;
+}
+
+export interface TemplatePreviewResponse {
+  rendered_subject: string;
+  rendered_html: string;
 }
 
 export interface DailyStatsItem {

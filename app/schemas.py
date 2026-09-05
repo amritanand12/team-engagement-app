@@ -26,6 +26,8 @@ class EmployeeOut(BaseModel):
     manager_id: str | None = None
     team_channel_id: str | None = None
     is_active: bool = True
+    birthday_template_id: str | None = None
+    anniversary_template_id: str | None = None
     last_synced_at: datetime | None = None
 
 
@@ -40,6 +42,8 @@ class EmployeeCreateIn(BaseModel):
     department: str | None = None
     manager_id: str | None = None
     team_channel_id: str | None = None
+    birthday_template_id: str | None = None
+    anniversary_template_id: str | None = None
     is_active: bool = True
 
     @field_validator("email")
@@ -70,6 +74,8 @@ class EmployeeUpdateIn(BaseModel):
     department: str | None = None
     manager_id: str | None = None
     team_channel_id: str | None = None
+    birthday_template_id: str | None = None
+    anniversary_template_id: str | None = None
     is_active: bool | None = None
 
     @field_validator("email")
@@ -144,17 +150,42 @@ class EventTemplateOut(BaseModel):
     id: str
     organization_id: str | None = None
     event_type: EventType
+    name: str | None = ""
     variant_key: str
     subject_line: str
     html_body: str
     is_active: bool
+    is_default: bool = False
     created_at: datetime
 
 
+class TemplateCreateIn(BaseModel):
+    name: str
+    event_type: EventType
+    subject_line: str
+    html_body: str
+    variant_key: str | None = None
+    is_default: bool = False
+    is_active: bool = True
+
+
 class TemplateUpdateIn(BaseModel):
+    name: str | None = None
     is_active: bool | None = None
+    is_default: bool | None = None
     subject_line: str | None = None
     html_body: str | None = None
+
+
+class TemplatePreviewIn(BaseModel):
+    subject_line: str
+    html_body: str
+    event_type: EventType
+
+
+class TemplatePreviewOut(BaseModel):
+    rendered_subject: str
+    rendered_html: str
 
 
 class DailyStatsItem(BaseModel):

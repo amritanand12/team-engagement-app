@@ -38,6 +38,9 @@ from app.schemas import (
     ResendResponse,
     ScanTriggerResponse,
     StatsSummaryResponse,
+    TemplateCreateIn,
+    TemplatePreviewIn,
+    TemplatePreviewOut,
     TemplateUpdateIn,
     TodayStats,
     UpcomingEventItem,
@@ -48,7 +51,7 @@ from app.services.demo import reset_demo_organization
 from app.services.hrms_sync import sync_employees
 from app.services.mailer import get_mailer, send_with_retry
 from app.services.pipeline import run_tenant_pipeline
-from app.services.renderer import render_event
+from app.services.renderer import preview_template_render, render_event
 from app.services.scanner import find_due_events
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -362,6 +365,8 @@ def get_employee(
         manager_id=emp.manager_id,
         team_channel_id=emp.team_channel_id,
         is_active=emp.is_active,
+        birthday_template_id=emp.birthday_template_id,
+        anniversary_template_id=emp.anniversary_template_id,
         last_synced_at=emp.last_synced_at,
         recent_events=recent_events,
     )
@@ -381,6 +386,24 @@ def create_employee(
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail="Employee code already exists in this organization")
+
+    if payload.birthday_template_id:
+        bt = db.query(EventTemplate).filter(
+            EventTemplate.id == payload.birthday_template_id,
+            EventTemplate.organization_id == org.id,
+            EventTemplate.event_type == EventType.BIRTHDAY,
+        ).first()
+        if not bt:
+            raise HTTPException(status_code=400, detail="Invalid birthday template selected")
+
+    if payload.anniversary_template_id:
+        at = db.query(EventTemplate).filter(
+            EventTemplate.id == payload.anniversary_template_id,
+            EventTemplate.organization_id == org.id,
+            EventTemplate.event_type == EventType.WORK_ANNIVERSARY,
+        ).first()
+        if not at:
+            raise HTTPException(status_code=400, detail="Invalid anniversary template selected")
 
     emp_data = payload.model_dump()
     emp_data["organization_id"] = org.id
@@ -418,6 +441,24 @@ def update_employee(
     ).first()
     if not emp:
         raise HTTPException(status_code=404, detail="Employee not found")
+
+    if payload.birthday_template_id:
+        bt = db.query(EventTemplate).filter(
+            EventTemplate.id == payload.birthday_template_id,
+            EventTemplate.organization_id == org.id,
+            EventTemplate.event_type == EventType.BIRTHDAY,
+        ).first()
+        if not bt:
+            raise HTTPException(status_code=400, detail="Invalid birthday template selected")
+
+    if payload.anniversary_template_id:
+        at = db.query(EventTemplate).filter(
+            EventTemplate.id == payload.anniversary_template_id,
+            EventTemplate.organization_id == org.id,
+            EventTemplate.event_type == EventType.WORK_ANNIVERSARY,
+        ).first()
+        if not at:
+            raise HTTPException(status_code=400, detail="Invalid anniversary template selected")
 
     data = payload.model_dump(exclude_unset=True)
     if "employee_code" in data and data["employee_code"] != emp.employee_code:
@@ -493,12 +534,81 @@ def list_templates(
     org: Organization = Depends(get_current_org),
     db: Session = Depends(get_db),
 ):
-    return (
+    templates = (
         db.query(EventTemplate)
         .filter(EventTemplate.organization_id == org.id)
-        .order_by(EventTemplate.event_type.asc(), EventTemplate.variant_key.asc())
+        .order_by(EventTemplate.event_type.asc(), EventTemplate.is_default.desc(), EventTemplate.name.asc())
         .all()
     )
+    if not templates:
+        from app.seed import seed_default_templates
+        seed_default_templates(db, org.id)
+        templates = (
+            db.query(EventTemplate)
+            .filter(EventTemplate.organization_id == org.id)
+            .order_by(EventTemplate.event_type.asc(), EventTemplate.is_default.desc(), EventTemplate.name.asc())
+            .all()
+        )
+    return templates
+
+
+@router.post("/templates", response_model=EventTemplateOut, status_code=201)
+def create_template(
+    payload: TemplateCreateIn,
+    request: Request,
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    db: Session = Depends(get_db),
+):
+    user, org = user_and_org
+
+    # Generate variant_key if not provided
+    import re, uuid
+    variant_key = payload.variant_key
+    if not variant_key:
+        slug_base = re.sub(r"[^a-zA-Z0-9_]+", "_", payload.name.strip().lower())
+        variant_key = f"{slug_base}_{uuid.uuid4().hex[:6]}"
+
+    # Validate template syntax with Jinja2 engine
+    try:
+        preview_template_render(payload.subject_line, payload.html_body, payload.event_type)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid template syntax: {exc}")
+
+    # If marked as default, unset existing defaults for this event type
+    if payload.is_default:
+        db.query(EventTemplate).filter(
+            EventTemplate.organization_id == org.id,
+            EventTemplate.event_type == payload.event_type,
+        ).update({"is_default": False})
+
+    new_tmpl = EventTemplate(
+        organization_id=org.id,
+        name=payload.name.strip(),
+        event_type=payload.event_type,
+        variant_key=variant_key,
+        subject_line=payload.subject_line,
+        html_body=payload.html_body,
+        is_active=payload.is_active,
+        is_default=payload.is_default,
+    )
+    db.add(new_tmpl)
+    db.flush()
+
+    record_audit_log(
+        db,
+        action="TEMPLATE_CREATED",
+        actor_email=user.email,
+        actor_role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        actor_id=user.id,
+        organization_id=org.id,
+        resource_type="template",
+        resource_id=new_tmpl.id,
+        details=f"Created template '{new_tmpl.name}' ({new_tmpl.event_type.value}/{new_tmpl.variant_key}, default={new_tmpl.is_default})",
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    db.refresh(new_tmpl)
+    return new_tmpl
 
 
 @router.patch("/templates/{template_id}", response_model=EventTemplateOut)
@@ -517,6 +627,22 @@ def update_template(
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
 
+    # If updating subject or body, validate syntax
+    test_subject = payload.subject_line if payload.subject_line is not None else template.subject_line
+    test_body = payload.html_body if payload.html_body is not None else template.html_body
+    try:
+        preview_template_render(test_subject, test_body, template.event_type)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid template syntax: {exc}")
+
+    # If setting is_default=True, unset other defaults for this event type
+    if payload.is_default is True:
+        db.query(EventTemplate).filter(
+            EventTemplate.organization_id == org.id,
+            EventTemplate.event_type == template.event_type,
+            EventTemplate.id != template.id,
+        ).update({"is_default": False})
+
     data = payload.model_dump(exclude_unset=True)
     for k, v in data.items():
         if v is not None:
@@ -531,12 +657,86 @@ def update_template(
         organization_id=org.id,
         resource_type="template",
         resource_id=template.id,
-        details=f"Updated template {template.id} ({template.event_type.value if hasattr(template.event_type, 'value') else template.event_type}/{template.variant_key})",
+        details=f"Updated template '{template.name or template.variant_key}' ({template.event_type.value}/{template.variant_key}, default={template.is_default})",
         ip_address=request.client.host if request.client else None,
     )
     db.commit()
     db.refresh(template)
     return template
+
+
+@router.delete("/templates/{template_id}")
+def delete_template(
+    template_id: str,
+    request: Request,
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    db: Session = Depends(get_db),
+):
+    user, org = user_and_org
+    template = db.query(EventTemplate).filter(
+        EventTemplate.id == template_id,
+        EventTemplate.organization_id == org.id,
+    ).first()
+    if not template:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    if template.is_default:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete the default template for this event type. Please designate another template as default first before deleting this one.",
+        )
+
+    # Disassociate from employees if assigned
+    db.query(EmployeeProfile).filter(
+        EmployeeProfile.organization_id == org.id,
+        EmployeeProfile.birthday_template_id == template.id,
+    ).update({"birthday_template_id": None})
+
+    db.query(EmployeeProfile).filter(
+        EmployeeProfile.organization_id == org.id,
+        EmployeeProfile.anniversary_template_id == template.id,
+    ).update({"anniversary_template_id": None})
+
+    record_audit_log(
+        db,
+        action="TEMPLATE_DELETED",
+        actor_email=user.email,
+        actor_role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        actor_id=user.id,
+        organization_id=org.id,
+        resource_type="template",
+        resource_id=template.id,
+        details=f"Deleted template '{template.name or template.variant_key}' ({template.event_type.value}/{template.variant_key})",
+        ip_address=request.client.host if request.client else None,
+    )
+
+    db.delete(template)
+    db.commit()
+    return {"message": "Template successfully deleted", "template_id": template_id}
+
+
+@router.post("/templates/preview", response_model=TemplatePreviewOut)
+def preview_template(
+    payload: TemplatePreviewIn,
+    org: Organization = Depends(get_current_org),
+):
+    try:
+        custom_ctx = {
+            "company_name": org.name,
+            "company_logo_url": org.company_logo_url,
+        }
+        rendered_subject, rendered_html = preview_template_render(
+            subject_line=payload.subject_line,
+            html_body=payload.html_body,
+            event_type=payload.event_type,
+            custom_context=custom_ctx,
+        )
+        return TemplatePreviewOut(
+            rendered_subject=rendered_subject,
+            rendered_html=rendered_html,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 # ---------------------------------------------------------------------------

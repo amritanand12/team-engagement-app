@@ -99,10 +99,126 @@ def build_context(
     }
 
 
+def resolve_template_for_event(
+    db: Session,
+    employee: EmployeeProfile,
+    event_type: EventType,
+    years: int | None,
+    organization_id: str | None,
+) -> EventTemplate:
+    """
+    Resolves the exact template to render:
+    1. If employee has a specific template assigned for this event type and it is active, use it!
+    2. If no specific template is assigned, resolve the organization's active default template
+       (or milestone-tier variant if applicable for anniversaries).
+    3. Fall back to any active default template for that event type.
+    4. Fall back to any active template of that event type in the organization.
+    """
+    # 1. Member-specific assigned template
+    assigned_template_id = None
+    if event_type == EventType.BIRTHDAY and employee.birthday_template_id:
+        assigned_template_id = employee.birthday_template_id
+    elif event_type == EventType.WORK_ANNIVERSARY and employee.anniversary_template_id:
+        assigned_template_id = employee.anniversary_template_id
+
+    if assigned_template_id:
+        tmpl_q = db.query(EventTemplate).filter(
+            EventTemplate.id == assigned_template_id,
+            EventTemplate.is_active.is_(True),
+        )
+        if organization_id:
+            tmpl_q = tmpl_q.filter(EventTemplate.organization_id == organization_id)
+        found = tmpl_q.first()
+        if found:
+            return found
+
+    # 2. Anniversary milestone-tier check (e.g. 5yr, 10yr) if configured
+    if event_type == EventType.WORK_ANNIVERSARY:
+        variant_key = select_variant(event_type, years)
+        if variant_key in ("anniversary_5yr", "anniversary_10yr"):
+            milestone_q = db.query(EventTemplate).filter(
+                EventTemplate.event_type == event_type,
+                EventTemplate.variant_key == variant_key,
+                EventTemplate.is_active.is_(True),
+            )
+            if organization_id:
+                milestone_q = milestone_q.filter(EventTemplate.organization_id == organization_id)
+            milestone_tmpl = milestone_q.first()
+            if milestone_tmpl:
+                return milestone_tmpl
+
+    # 3. Organization Default template (is_default == True)
+    default_q = db.query(EventTemplate).filter(
+        EventTemplate.event_type == event_type,
+        EventTemplate.is_default.is_(True),
+        EventTemplate.is_active.is_(True),
+    )
+    if organization_id:
+        default_q = default_q.filter(EventTemplate.organization_id == organization_id)
+    default_tmpl = default_q.first()
+    if default_tmpl:
+        return default_tmpl
+
+    # 4. Fall back by variant_key ("default" or "anniversary_default")
+    fallback_key = "default" if event_type == EventType.BIRTHDAY else "anniversary_default"
+    fallback_q = db.query(EventTemplate).filter(
+        EventTemplate.event_type == event_type,
+        EventTemplate.variant_key == fallback_key,
+        EventTemplate.is_active.is_(True),
+    )
+    if organization_id:
+        fallback_q = fallback_q.filter(EventTemplate.organization_id == organization_id)
+    fallback_tmpl = fallback_q.first()
+    if fallback_tmpl:
+        return fallback_tmpl
+
+    # 5. Fall back to ANY active template of that event type
+    any_q = db.query(EventTemplate).filter(
+        EventTemplate.event_type == event_type,
+        EventTemplate.is_active.is_(True),
+    )
+    if organization_id:
+        any_q = any_q.filter(EventTemplate.organization_id == organization_id)
+    any_tmpl = any_q.first()
+    if any_tmpl:
+        return any_tmpl
+
+    raise RenderError(f"No active template found for {event_type} in organization {organization_id}")
+
+
+def preview_template_render(
+    subject_line: str,
+    html_body: str,
+    event_type: EventType,
+    custom_context: dict | None = None,
+) -> tuple[str, str]:
+    """Renders a template subject and HTML body with sample preview context."""
+    default_context = {
+        "name": "Alex Morgan",
+        "preferred_name": "Alex",
+        "photo_url": settings.DEFAULT_AVATAR_URL,
+        "department": "Product Engineering",
+        "years": 5 if event_type == EventType.WORK_ANNIVERSARY else None,
+        "company_name": settings.COMPANY_NAME,
+        "company_logo_url": settings.COMPANY_LOGO_URL,
+    }
+    if custom_context:
+        default_context.update(custom_context)
+
+    try:
+        subject_tpl = _env.from_string(subject_line)
+        body_tpl = _env.from_string(html_body)
+        rendered_subject = subject_tpl.render(**default_context)
+        rendered_html = body_tpl.render(**default_context)
+        return rendered_subject, rendered_html
+    except Exception as exc:
+        raise RenderError(f"Template preview render failed: {exc}")
+
+
 def render_event(db: Session, event: EventLog) -> EventLog:
     """
-    Renders one EventLog row in place: resolves the template, substitutes
-    placeholders, and transitions status pending -> rendered (or -> failed).
+    Renders one EventLog row in place: resolves member-specific template or default,
+    substitutes placeholders, and transitions status pending -> rendered (or -> failed).
     """
     employee = event.employee or db.get(EmployeeProfile, event.employee_id)
     if employee is None:
@@ -110,11 +226,13 @@ def render_event(db: Session, event: EventLog) -> EventLog:
         event.error_detail = f"Employee {event.employee_id} not found"
         return event
 
-    variant_key = select_variant(event.event_type, event.years)
-
     try:
-        template = get_active_template(
-            db, event.event_type, variant_key, organization_id=event.organization_id
+        template = resolve_template_for_event(
+            db,
+            employee=employee,
+            event_type=event.event_type,
+            years=event.years,
+            organization_id=event.organization_id,
         )
         context = build_context(employee, event.years)
         subject_tpl = _env.from_string(template.subject_line)

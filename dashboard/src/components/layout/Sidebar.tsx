@@ -92,12 +92,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 key={item.id}
                 type="button"
                 onClick={() => handleNavClick(item.id)}
-                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium border transition-colors duration-150 outline-none focus:outline-none focus:ring-0 select-none ${
                   isActive
                     ? isPlatformTab
-                      ? 'bg-purple-500/20 text-purple-300 font-semibold shadow-inner border border-purple-500/40'
-                      : 'bg-rose-500/15 text-rose-400 font-semibold shadow-inner border border-rose-500/30'
-                    : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
+                      ? 'bg-purple-500/20 text-purple-300 font-semibold border-purple-500/40'
+                      : 'bg-rose-500/15 text-rose-400 font-semibold border-rose-500/30'
+                    : 'border-transparent text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
                 }`}
               >
                 <Icon
@@ -124,7 +124,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onOpenScanModal();
               onCloseMobile();
             }}
-            className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors"
+            className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium border border-transparent text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors duration-150 outline-none focus:outline-none focus:ring-0"
           >
             <CalendarCheck className="w-4 h-4 text-emerald-400" />
             <span>Run Scan Now</span>
@@ -135,7 +135,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onOpenHrmsSync();
               onCloseMobile();
             }}
-            className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors"
+            className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium border border-transparent text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors duration-150 outline-none focus:outline-none focus:ring-0"
           >
             <RefreshCw className="w-4 h-4 text-sky-400" />
             <span>Sync with HRMS</span>

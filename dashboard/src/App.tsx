@@ -13,7 +13,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { SuperAdminPage } from './pages/SuperAdminPage';
 
 const AppContent: React.FC = () => {
-  const { isAuthenticated, isSuperAdmin, user } = useAuth();
+  const { isAuthenticated, isSuperAdmin, user, activeOrg, selectedTenantId } = useAuth();
   const [activeTab, setActiveTab] = useState<NavTab>(() => (isSuperAdmin ? 'superadmin' : 'overview'));
   const [refreshKey, setRefreshKey] = useState(0);
   const prevUserIdRef = useRef<string | null>(null);
@@ -48,13 +48,15 @@ const AppContent: React.FC = () => {
     setRefreshKey((prev) => prev + 1);
   };
 
+  const tenantKey = `${refreshKey}-${selectedTenantId || activeOrg?.id || 'none'}`;
+
   const renderActivePage = () => {
     switch (activeTab) {
       case 'superadmin':
         if (!isSuperAdmin) {
           return (
             <OverviewPage
-              key={refreshKey}
+              key={tenantKey}
               onNavigateTab={(tab) => setActiveTab(tab)}
               onOpenScanModal={() => {}}
             />
@@ -69,7 +71,7 @@ const AppContent: React.FC = () => {
       case 'overview':
         return (
           <OverviewPage
-            key={refreshKey}
+            key={tenantKey}
             onNavigateTab={(tab) => setActiveTab(tab)}
             onOpenScanModal={() => {
               // Triggered via Header / Layout
@@ -77,17 +79,17 @@ const AppContent: React.FC = () => {
           />
         );
       case 'events':
-        return <EventsPage key={refreshKey} />;
+        return <EventsPage key={tenantKey} />;
       case 'employees':
-        return <EmployeesPage key={refreshKey} />;
+        return <EmployeesPage key={tenantKey} />;
       case 'digests':
-        return <DigestsPage key={refreshKey} />;
+        return <DigestsPage key={tenantKey} />;
       case 'templates':
-        return <TemplatesPage key={refreshKey} />;
+        return <TemplatesPage key={tenantKey} />;
       case 'settings':
-        return <SettingsPage key={refreshKey} />;
+        return <SettingsPage key={tenantKey} />;
       default:
-        return <OverviewPage key={refreshKey} onNavigateTab={(tab) => setActiveTab(tab)} onOpenScanModal={() => {}} />;
+        return <OverviewPage key={tenantKey} onNavigateTab={(tab) => setActiveTab(tab)} onOpenScanModal={() => {}} />;
     }
   };
 

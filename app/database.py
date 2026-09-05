@@ -171,8 +171,36 @@ def session_scope() -> Iterator[Session]:
         db.close()
 
 
+def _run_auto_migrations(eng: Engine) -> None:
+    """Safely adds newly introduced columns to existing tables in SQLite or PostgreSQL."""
+    from sqlalchemy import inspect
+    inspector = inspect(eng)
+    tables = inspector.get_table_names()
+
+    with eng.connect() as conn:
+        if "event_template" in tables:
+            cols = [c["name"] for c in inspector.get_columns("event_template")]
+            if "name" not in cols:
+                conn.execute(text("ALTER TABLE event_template ADD COLUMN name VARCHAR(255) DEFAULT ''"))
+            if "is_default" not in cols:
+                conn.execute(text("ALTER TABLE event_template ADD COLUMN is_default BOOLEAN DEFAULT FALSE"))
+            conn.execute(text("UPDATE event_template SET name = variant_key WHERE name IS NULL OR name = ''"))
+            conn.execute(text("UPDATE event_template SET is_default = TRUE WHERE variant_key IN ('default', 'anniversary_default') AND is_default IS NOT TRUE"))
+            conn.commit()
+
+        if "employee_profile" in tables:
+            cols = [c["name"] for c in inspector.get_columns("employee_profile")]
+            if "birthday_template_id" not in cols:
+                conn.execute(text("ALTER TABLE employee_profile ADD COLUMN birthday_template_id VARCHAR(36)"))
+            if "anniversary_template_id" not in cols:
+                conn.execute(text("ALTER TABLE employee_profile ADD COLUMN anniversary_template_id VARCHAR(36)"))
+            conn.commit()
+
+
 def init_db() -> None:
-    """Create tables. In production, prefer Alembic migrations over this."""
+    """Create tables and apply incremental schema updates."""
     from app import models  # noqa: F401  (ensures models are registered on Base)
 
     Base.metadata.create_all(bind=engine)
+    _run_auto_migrations(engine)
+
