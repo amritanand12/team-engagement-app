@@ -168,45 +168,69 @@ def run_tenant_pipeline(
     mailer = mailer or get_mailer(org)
     leap_policy = org.leap_day_policy if org else settings.LEAP_DAY_POLICY
 
-    detected, batch_id = scanner.run_scan(
-        db, scan_date, organization_id=organization_id, leap_day_policy=leap_policy
+    from contextlib import nullcontext
+    from app.database import tenant_session_scope
+
+    is_dedicated = bool(
+        org
+        and getattr(org, "is_db_configured", False)
+        and getattr(org, "db_host", None)
+        and getattr(org, "db_name", None)
+        and not getattr(org, "is_demo", False)
     )
-    db.commit()
+    ctx = tenant_session_scope(org) if is_dedicated else nullcontext(db)
 
-    _render_pending(db, batch_id, organization_id=organization_id)
-    db.commit()
+    with ctx as tdb:
+        detected, batch_id = scanner.run_scan(
+            tdb, scan_date, organization_id=organization_id, leap_day_policy=leap_policy
+        )
+        tdb.commit()
 
-    _send_individual_emails(db, batch_id, mailer, organization_id=organization_id)
-    db.commit()
+        _render_pending(tdb, batch_id, organization_id=organization_id)
+        tdb.commit()
 
-    digest_status = _send_digest(db, batch_id, scan_date, mailer, org=org)
-    db.commit()
+        _send_individual_emails(tdb, batch_id, mailer, organization_id=organization_id)
+        tdb.commit()
 
-    counts = {
-        EventStatus.SENT: 0,
-        EventStatus.FAILED: 0,
-        EventStatus.SKIPPED: 0,
-        EventStatus.RENDERED: 0,
-    }
-    rows = (
-        db.query(EventLog.status)
-        .filter(EventLog.batch_id == batch_id, EventLog.organization_id == organization_id)
-        .all()
-    )
-    for (status,) in rows:
-        counts[status] = counts.get(status, 0) + 1
+        digest_status = _send_digest(tdb, batch_id, scan_date, mailer, org=org)
+        tdb.commit()
 
-    result = PipelineResult(
-        batch_id=batch_id,
-        detected=len(rows),
-        rendered=counts.get(EventStatus.SENT, 0) + counts.get(EventStatus.RENDERED, 0),
-        sent=counts.get(EventStatus.SENT, 0),
-        failed=counts.get(EventStatus.FAILED, 0),
-        skipped=counts.get(EventStatus.SKIPPED, 0),
-        digest_status=digest_status,
-    )
-    logger.info("Pipeline complete for org %s batch %s: %s", organization_id, batch_id, result)
-    return result
+        counts = {
+            EventStatus.SENT: 0,
+            EventStatus.FAILED: 0,
+            EventStatus.SKIPPED: 0,
+            EventStatus.RENDERED: 0,
+        }
+        rows = (
+            tdb.query(EventLog.status)
+            .filter(EventLog.batch_id == batch_id, EventLog.organization_id == organization_id)
+            .all()
+        )
+        for (status,) in rows:
+            counts[status] = counts.get(status, 0) + 1
+
+        # Cache high-level counts in platform db
+        try:
+            total_emp = tdb.query(EmployeeProfile).filter(EmployeeProfile.organization_id == organization_id).count()
+            total_ev = tdb.query(EventLog).filter(EventLog.organization_id == organization_id).count()
+            if org:
+                org.cached_employee_count = total_emp
+                org.cached_event_count = total_ev
+                db.commit()
+        except Exception as cache_exc:
+            logger.warning("Could not update cached counts for org %s: %s", organization_id, cache_exc)
+
+        result = PipelineResult(
+            batch_id=batch_id,
+            detected=len(rows),
+            rendered=counts.get(EventStatus.SENT, 0) + counts.get(EventStatus.RENDERED, 0),
+            sent=counts.get(EventStatus.SENT, 0),
+            failed=counts.get(EventStatus.FAILED, 0),
+            skipped=counts.get(EventStatus.SKIPPED, 0),
+            digest_status=digest_status,
+        )
+        logger.info("Pipeline complete for org %s batch %s: %s", organization_id, batch_id, result)
+        return result
 
 
 def run_daily_pipeline(

@@ -92,12 +92,30 @@ class Organization(Base):
     leap_day_policy: Mapped[str] = mapped_column(String(20), default="feb28")  # feb28, mar1, leap_only
     digest_channel_id: Mapped[str] = mapped_column(String(255), default="general")
 
+    # Tenant Database (PostgreSQL BYODB)
+    db_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    db_port: Mapped[int | None] = mapped_column(Integer, default=5432, nullable=True)
+    db_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    db_user: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    db_password: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    db_ssl_mode: Mapped[str | None] = mapped_column(String(32), default="prefer", nullable=True)
+    is_db_configured: Mapped[bool] = mapped_column(Boolean, default=False)
+
     # Custom SMTP settings (optional, defaults to system mailer)
     smtp_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
     smtp_port: Mapped[int | None] = mapped_column(Integer, default=587, nullable=True)
     smtp_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    smtp_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    smtp_password: Mapped[str | None] = mapped_column(String(512), nullable=True)
     smtp_from_address: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    smtp_use_tls: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_smtp_configured: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Onboarding completion status (must configure DB + SMTP before adding data)
+    is_setup_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Cached high-level metrics for SuperAdmin telemetry
+    cached_employee_count: Mapped[int] = mapped_column(Integer, default=0)
+    cached_event_count: Mapped[int] = mapped_column(Integer, default=0)
 
     # Webhook channels
     slack_webhook_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)

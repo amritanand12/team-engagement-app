@@ -65,7 +65,8 @@ class Settings:
 
     # --- Admin API & Security ---
     ADMIN_API_KEY: str = os.getenv("ADMIN_API_KEY", "change-me-in-production")
-    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "")
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "") or os.getenv("SECRET_KEY", "engagement-default-jwt-secret-key-32chars")
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "") or JWT_SECRET_KEY
 
     # --- HRMS sync ---
     HRMS_API_BASE_URL: str = os.getenv("HRMS_API_BASE_URL", "https://hrms.example.com/api")

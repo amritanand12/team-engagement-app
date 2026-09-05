@@ -196,6 +196,164 @@ def _run_auto_migrations(eng: Engine) -> None:
                 conn.execute(text("ALTER TABLE employee_profile ADD COLUMN anniversary_template_id VARCHAR(36)"))
             conn.commit()
 
+        if "organization" in tables:
+            cols = [c["name"] for c in inspector.get_columns("organization")]
+            if "db_host" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN db_host VARCHAR(255)"))
+            if "db_port" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN db_port INTEGER DEFAULT 5432"))
+            if "db_name" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN db_name VARCHAR(255)"))
+            if "db_user" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN db_user VARCHAR(255)"))
+            if "db_password" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN db_password VARCHAR(512)"))
+            if "db_ssl_mode" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN db_ssl_mode VARCHAR(32) DEFAULT 'prefer'"))
+            if "is_db_configured" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN is_db_configured BOOLEAN DEFAULT FALSE"))
+            if "smtp_use_tls" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN smtp_use_tls BOOLEAN DEFAULT TRUE"))
+            if "is_smtp_configured" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN is_smtp_configured BOOLEAN DEFAULT FALSE"))
+            if "is_setup_complete" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN is_setup_complete BOOLEAN DEFAULT FALSE"))
+            if "cached_employee_count" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN cached_employee_count INTEGER DEFAULT 0"))
+            if "cached_event_count" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN cached_event_count INTEGER DEFAULT 0"))
+
+            # Keep demo organizations unlocked so demo sandboxes and tests run seamlessly
+            conn.execute(text("UPDATE organization SET is_setup_complete = TRUE, is_db_configured = TRUE, is_smtp_configured = TRUE WHERE is_demo = TRUE"))
+            conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Tenant Engine Pool & Data Plane Routing (BYODB)
+# ---------------------------------------------------------------------------
+
+_tenant_engine_pool: dict[str, Engine] = {}
+
+
+def get_tenant_db_url(org: Any) -> str | None:
+    """Constructs SQLAlchemy connection URL for a tenant's private PostgreSQL database."""
+    if not getattr(org, "is_db_configured", False) or not getattr(org, "db_host", None) or not getattr(org, "db_name", None):
+        return None
+
+    from app.services.crypto import decrypt_credential
+    password = decrypt_credential(getattr(org, "db_password", None)) or ""
+    user = getattr(org, "db_user", "postgres") or "postgres"
+    port = getattr(org, "db_port", 5432) or 5432
+    host = getattr(org, "db_host", "localhost")
+    db_name = getattr(org, "db_name", "")
+    ssl_mode = getattr(org, "db_ssl_mode", "prefer") or "prefer"
+
+    # URL-encode credentials if needed
+    import urllib.parse
+    user_esc = urllib.parse.quote_plus(user)
+    pwd_esc = urllib.parse.quote_plus(password)
+    ssl_param = f"?sslmode={ssl_mode}" if ssl_mode else ""
+    return f"postgresql+psycopg2://{user_esc}:{pwd_esc}@{host}:{port}/{db_name}{ssl_param}"
+
+
+def get_tenant_engine(org: Any) -> Engine:
+    """
+    Returns an Engine connected to the tenant's dedicated database.
+    Falls back to the platform engine for demo sandbox organizations or local dev without custom DB.
+    """
+    if getattr(org, "is_db_configured", False) and not getattr(org, "is_demo", False):
+        db_url = get_tenant_db_url(org)
+        if db_url:
+            org_id = getattr(org, "id", "")
+            if org_id not in _tenant_engine_pool:
+                try:
+                    _tenant_engine_pool[org_id] = create_engine(
+                        db_url,
+                        pool_pre_ping=True,
+                        pool_size=5,
+                        max_overflow=10,
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to create engine for tenant %s: %s", org_id, exc)
+                    return engine
+            return _tenant_engine_pool[org_id]
+    return engine
+
+
+def invalidate_tenant_engine(org_id: str) -> None:
+    """Disposes and removes an engine from the pool when tenant DB settings change."""
+    eng = _tenant_engine_pool.pop(org_id, None)
+    if eng:
+        try:
+            eng.dispose()
+        except Exception:
+            pass
+
+
+def provision_tenant_database(org: Any, target_engine: Engine | None = None) -> tuple[bool, str]:
+    """
+    Initializes tenant tables and default templates directly inside the tenant's private database.
+    """
+    eng = target_engine or get_tenant_engine(org)
+    from app.models import DigestLog, EmployeeProfile, EventLog, EventTemplate, Organization
+    tenant_tables = [
+        Organization.__table__,
+        EventTemplate.__table__,
+        EmployeeProfile.__table__,
+        EventLog.__table__,
+        DigestLog.__table__,
+    ]
+    try:
+        # 1. Create tables in tenant database
+        Base.metadata.create_all(bind=eng, tables=tenant_tables)
+        _run_auto_migrations(eng)
+
+        # 2. Seed initial mirror org row and default celebration templates into tenant database
+        TenantSession = sessionmaker(bind=eng, autoflush=False, autocommit=False)
+        with TenantSession() as s:
+            org_id = getattr(org, "id", "")
+            if org_id:
+                existing_org = s.get(Organization, org_id)
+                if not existing_org:
+                    s.add(
+                        Organization(
+                            id=org_id,
+                            name=getattr(org, "name", "Tenant Org"),
+                            slug=getattr(org, "slug", "tenant-org"),
+                            api_key=getattr(org, "api_key", ""),
+                            business_timezone=getattr(org, "business_timezone", "Asia/Kolkata"),
+                            leap_day_policy=getattr(org, "leap_day_policy", "feb28"),
+                            digest_channel_id=getattr(org, "digest_channel_id", "general"),
+                            is_active=True,
+                            is_setup_complete=True,
+                            is_db_configured=True,
+                            is_smtp_configured=getattr(org, "is_smtp_configured", False),
+                        )
+                    )
+                    s.flush()
+            from app.seed import seed_default_templates
+            seed_default_templates(s, org_id)
+            s.commit()
+        return True, "Tenant database schema and default templates successfully provisioned."
+    except Exception as exc:
+        return False, f"Failed to provision tenant database: {exc}"
+
+
+@contextmanager
+def tenant_session_scope(org: Any) -> Iterator[Session]:
+    """Yields a database session connected directly to the tenant's private database."""
+    eng = get_tenant_engine(org)
+    TenantSession = sessionmaker(bind=eng, autoflush=False, autocommit=False)
+    session = TenantSession()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
 
 def init_db() -> None:
     """Create tables and apply incremental schema updates."""

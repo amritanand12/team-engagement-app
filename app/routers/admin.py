@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import time
+import urllib.parse
 from datetime import date, datetime, timedelta
+from typing import Iterator
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
-from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, func, or_, text
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import get_settings
-from app.database import get_db
+from app.database import get_db, get_tenant_engine, invalidate_tenant_engine, provision_tenant_database
 from app.models import (
     DigestLog,
     EmployeeProfile,
@@ -42,14 +45,19 @@ from app.schemas import (
     TemplatePreviewIn,
     TemplatePreviewOut,
     TemplateUpdateIn,
+    TestDbConnectionIn,
+    TestDbConnectionOut,
+    TestSmtpConnectionIn,
+    TestSmtpConnectionOut,
     TodayStats,
     UpcomingEventItem,
 )
 from app.services.audit import record_audit_log
+from app.services.crypto import encrypt_credential
 from app.services.csv_importer import import_employees_from_csv
 from app.services.demo import reset_demo_organization
 from app.services.hrms_sync import sync_employees
-from app.services.mailer import get_mailer, send_with_retry
+from app.services.mailer import SMTPMailer, get_mailer, send_with_retry
 from app.services.pipeline import run_tenant_pipeline
 from app.services.renderer import preview_template_render, render_event
 from app.services.scanner import find_due_events
@@ -89,6 +97,43 @@ def get_current_org(
     return org
 
 
+def get_tenant_db(
+    org: Organization = Depends(get_current_org),
+    db: Session = Depends(get_db),
+) -> Iterator[Session]:
+    """
+    Yields a database session connected directly to the tenant's dedicated database.
+    Falls back to the platform database for demo organizations or unconfigured tenants.
+    """
+    if (
+        getattr(org, "is_db_configured", False)
+        and getattr(org, "db_host", None)
+        and getattr(org, "db_name", None)
+        and not getattr(org, "is_demo", False)
+    ):
+        eng = get_tenant_engine(org)
+        TenantSession = sessionmaker(bind=eng, autoflush=False, autocommit=False)
+        session = TenantSession()
+        try:
+            yield session
+        finally:
+            session.close()
+    else:
+        yield db
+
+
+def check_onboarding_guard(org: Organization) -> None:
+    """
+    Enforces that an organization has configured their dedicated database and email provider
+    before they can insert employee data or run automated scans.
+    """
+    if not org.is_setup_complete and not org.is_demo:
+        raise HTTPException(
+            status_code=403,
+            detail="You cannot add your data before you configure your database and email provider service.",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Organization Settings & Profile
 # ---------------------------------------------------------------------------
@@ -110,8 +155,14 @@ def update_organization_profile(
 ):
     user, org = user_and_org
     data = payload.model_dump(exclude_unset=True)
+    if "db_password" in data and data["db_password"]:
+        data["db_password"] = encrypt_credential(data["db_password"])
+    if "smtp_password" in data and data["smtp_password"]:
+        data["smtp_password"] = encrypt_credential(data["smtp_password"])
+
     for k, v in data.items():
         setattr(org, k, v)
+
     record_audit_log(
         db,
         action="SETTINGS_UPDATED",
@@ -129,6 +180,202 @@ def update_organization_profile(
     return org
 
 
+@router.post("/settings/test-db", response_model=TestDbConnectionOut)
+def test_database_connection(
+    payload: TestDbConnectionIn,
+    _org: Organization = Depends(get_current_org),
+):
+    """
+    Tests connectivity and latency to a tenant's private PostgreSQL database.
+    """
+    user_esc = urllib.parse.quote_plus(payload.db_user)
+    pwd_esc = urllib.parse.quote_plus(payload.db_password)
+    ssl_param = f"?sslmode={payload.db_ssl_mode}" if payload.db_ssl_mode else ""
+    url = f"postgresql+psycopg2://{user_esc}:{pwd_esc}@{payload.db_host}:{payload.db_port}/{payload.db_name}{ssl_param}"
+
+    t0 = time.perf_counter()
+    try:
+        test_engine = create_engine(url, connect_args={"connect_timeout": 5})
+        with test_engine.connect() as conn:
+            result = conn.execute(text("SELECT version();")).scalar()
+        latency = round((time.perf_counter() - t0) * 1000, 2)
+        test_engine.dispose()
+        return TestDbConnectionOut(
+            success=True,
+            latency_ms=latency,
+            server_version=str(result),
+            message=f"Successfully connected to PostgreSQL database ({latency} ms latency).",
+        )
+    except Exception as exc:
+        latency = round((time.perf_counter() - t0) * 1000, 2)
+        return TestDbConnectionOut(
+            success=False,
+            latency_ms=latency,
+            server_version=None,
+            message=f"Connection failed: {exc}",
+        )
+
+
+@router.post("/settings/database", response_model=OrganizationOut)
+def save_database_configuration(
+    payload: TestDbConnectionIn,
+    request: Request,
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    db: Session = Depends(get_db),
+):
+    """
+    Saves PostgreSQL connection credentials, provisions tenant tables, and activates BYODB.
+    """
+    user, org = user_and_org
+
+    user_esc = urllib.parse.quote_plus(payload.db_user)
+    pwd_esc = urllib.parse.quote_plus(payload.db_password)
+    ssl_param = f"?sslmode={payload.db_ssl_mode}" if payload.db_ssl_mode else ""
+    url = f"postgresql+psycopg2://{user_esc}:{pwd_esc}@{payload.db_host}:{payload.db_port}/{payload.db_name}{ssl_param}"
+
+    # Verify connectivity first
+    try:
+        test_engine = create_engine(url, connect_args={"connect_timeout": 5})
+        with test_engine.connect() as conn:
+            conn.execute(text("SELECT 1;"))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to connect to PostgreSQL database: {exc}. Please verify credentials and network access.",
+        )
+
+    # Invalidate cached engine
+    invalidate_tenant_engine(org.id)
+
+    # Update org credentials in platform DB
+    org.db_host = payload.db_host.strip()
+    org.db_port = payload.db_port
+    org.db_name = payload.db_name.strip()
+    org.db_user = payload.db_user.strip()
+    org.db_password = encrypt_credential(payload.db_password)
+    org.db_ssl_mode = payload.db_ssl_mode
+    org.is_db_configured = True
+
+    # Setup is complete if both DB and SMTP are configured
+    if org.is_smtp_configured:
+        org.is_setup_complete = True
+
+    db.commit()
+    db.refresh(org)
+
+    # Provision tenant tables directly on target engine
+    ok, msg = provision_tenant_database(org, target_engine=test_engine)
+    test_engine.dispose()
+    if not ok:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database connected but provisioning tables failed: {msg}",
+        )
+
+    record_audit_log(
+        db,
+        action="TENANT_DATABASE_CONFIGURED",
+        actor_email=user.email,
+        actor_role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        actor_id=user.id,
+        organization_id=org.id,
+        resource_type="organization",
+        resource_id=org.id,
+        details=f"Tenant configured private PostgreSQL database ({org.db_name} on {org.db_host}:{org.db_port})",
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    db.refresh(org)
+    return org
+
+
+@router.post("/settings/test-smtp", response_model=TestSmtpConnectionOut)
+def test_smtp_connection(
+    payload: TestSmtpConnectionIn,
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+):
+    """
+    Tests SMTP connectivity by attempting an SMTP handshake and sending a live test email.
+    """
+    user, org = user_and_org
+    recipient = payload.test_recipient or user.email
+
+    if settings.MAIL_PROVIDER == "mock" or settings.TESTING:
+        from app.services.mailer import MockMailer
+        mailer = MockMailer()
+    else:
+        mailer = SMTPMailer(
+            host=payload.smtp_host.strip(),
+            port=payload.smtp_port,
+            username=payload.smtp_username.strip() if payload.smtp_username else None,
+            password=payload.smtp_password if payload.smtp_password else None,
+            from_address=payload.smtp_from_address.strip(),
+            use_tls=payload.smtp_use_tls,
+        )
+
+    test_subject = f"Test Email from {org.name} Celebration Hub"
+    test_body = f"""
+    <div style="font-family: sans-serif; padding: 20px; line-height: 1.5;">
+        <h2 style="color: #4f46e5;">SMTP Connection Verified!</h2>
+        <p>This is a test notification confirming that your SMTP email settings for <strong>{org.name}</strong> are working perfectly.</p>
+        <p style="color: #6b7280; font-size: 12px;">Sent from {payload.smtp_from_address} via {payload.smtp_host}:{payload.smtp_port}</p>
+    </div>
+    """
+
+    success, error = send_with_retry(mailer, recipient, test_subject, test_body)
+    if success:
+        return TestSmtpConnectionOut(
+            success=True,
+            message=f"Test email successfully sent to {recipient} via {payload.smtp_host}:{payload.smtp_port}!",
+        )
+    return TestSmtpConnectionOut(
+        success=False,
+        message=f"Failed to send email via SMTP: {error}",
+    )
+
+
+@router.post("/settings/smtp", response_model=OrganizationOut)
+def save_smtp_configuration(
+    payload: TestSmtpConnectionIn,
+    request: Request,
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    db: Session = Depends(get_db),
+):
+    """
+    Saves custom SMTP email configuration, encrypts credentials, and activates mail delivery.
+    """
+    user, org = user_and_org
+
+    org.smtp_host = payload.smtp_host.strip()
+    org.smtp_port = payload.smtp_port
+    org.smtp_username = payload.smtp_username.strip() if payload.smtp_username else None
+    if payload.smtp_password:
+        org.smtp_password = encrypt_credential(payload.smtp_password)
+    org.smtp_from_address = payload.smtp_from_address.strip()
+    org.smtp_use_tls = payload.smtp_use_tls
+    org.is_smtp_configured = True
+
+    # Setup is complete if both DB and SMTP are configured
+    if org.is_db_configured:
+        org.is_setup_complete = True
+
+    record_audit_log(
+        db,
+        action="TENANT_SMTP_CONFIGURED",
+        actor_email=user.email,
+        actor_role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        actor_id=user.id,
+        organization_id=org.id,
+        resource_type="organization",
+        resource_id=org.id,
+        details=f"Tenant configured custom SMTP ({org.smtp_from_address} on {org.smtp_host}:{org.smtp_port})",
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    db.refresh(org)
+    return org
+
+
 # ---------------------------------------------------------------------------
 # Demo Sandbox Actions
 # ---------------------------------------------------------------------------
@@ -139,10 +386,13 @@ def reset_demo(
     request: Request,
     user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
 ):
     """Resets the demo organization with realistic mock employees & fresh scans."""
     user, org = user_and_org
-    emp_count, events_detected = reset_demo_organization(db, org.id)
+    emp_count, events_detected = reset_demo_organization(tenant_db, org.id)
+    org.cached_employee_count = emp_count
+    org.cached_event_count = events_detected
     record_audit_log(
         db,
         action="DEMO_RESET",
@@ -180,6 +430,8 @@ def trigger_scan(
     Manually runs the full pipeline (scan -> render -> send -> digest) for the current organization.
     """
     user, org = user_and_org
+    check_onboarding_guard(org)
+
     result = run_tenant_pipeline(db, org.id, scan_date=scan_date)
     record_audit_log(
         db,
@@ -207,9 +459,9 @@ def list_events(
     status: EventStatus | None = Query(default=None),
     employee_id: str | None = Query(default=None),
     org: Organization = Depends(get_current_org),
-    db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
 ):
-    q = db.query(EventLog).filter(EventLog.organization_id == org.id)
+    q = tenant_db.query(EventLog).filter(EventLog.organization_id == org.id)
     if batch_id:
         q = q.filter(EventLog.batch_id == batch_id)
     if status:
@@ -228,9 +480,9 @@ def list_events(
 def get_event(
     event_id: str,
     org: Organization = Depends(get_current_org),
-    db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
 ):
-    event = db.query(EventLog).filter(EventLog.id == event_id, EventLog.organization_id == org.id).first()
+    event = tenant_db.query(EventLog).filter(EventLog.id == event_id, EventLog.organization_id == org.id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     if event.employee:
@@ -244,9 +496,10 @@ def resend_event(
     request: Request,
     user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
 ):
     user, org = user_and_org
-    event = db.query(EventLog).filter(EventLog.id == event_id, EventLog.organization_id == org.id).first()
+    event = tenant_db.query(EventLog).filter(EventLog.id == event_id, EventLog.organization_id == org.id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
@@ -254,16 +507,16 @@ def resend_event(
         return ResendResponse(event_id=event.id, status=event.status, message="Already sent; refusing to resend.")
 
     if event.status in (EventStatus.PENDING, EventStatus.FAILED) and not event.rendered_html:
-        render_event(db, event)
-        db.commit()
+        render_event(tenant_db, event)
+        tenant_db.commit()
         if event.status == EventStatus.FAILED:
             return ResendResponse(event_id=event.id, status=event.status, message=event.error_detail or "Render failed")
 
-    employee = event.employee or db.get(EmployeeProfile, event.employee_id)
+    employee = event.employee or tenant_db.get(EmployeeProfile, event.employee_id)
     if not employee or not employee.email:
         event.status = EventStatus.FAILED
         event.error_detail = "Employee has no email address"
-        db.commit()
+        tenant_db.commit()
         return ResendResponse(event_id=event.id, status=event.status, message=event.error_detail)
 
     mailer = get_mailer(org)
@@ -291,6 +544,7 @@ def resend_event(
         details=f"Event resend attempt ({event.event_type.value if hasattr(event.event_type, 'value') else event.event_type}): {msg}",
         ip_address=request.client.host if request.client else None,
     )
+    tenant_db.commit()
     db.commit()
     return ResendResponse(event_id=event.id, status=event.status, message=msg)
 
@@ -307,9 +561,9 @@ def list_employees(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     org: Organization = Depends(get_current_org),
-    db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
 ):
-    q = db.query(EmployeeProfile).filter(EmployeeProfile.organization_id == org.id)
+    q = tenant_db.query(EmployeeProfile).filter(EmployeeProfile.organization_id == org.id)
     if is_active is not None:
         q = q.filter(EmployeeProfile.is_active.is_(is_active))
     if search:
@@ -332,9 +586,9 @@ def list_employees(
 def get_employee(
     employee_id: str,
     org: Organization = Depends(get_current_org),
-    db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
 ):
-    emp = db.query(EmployeeProfile).filter(
+    emp = tenant_db.query(EmployeeProfile).filter(
         EmployeeProfile.id == employee_id,
         EmployeeProfile.organization_id == org.id,
     ).first()
@@ -342,7 +596,7 @@ def get_employee(
         raise HTTPException(status_code=404, detail="Employee not found")
 
     recent_events = (
-        db.query(EventLog)
+        tenant_db.query(EventLog)
         .filter(EventLog.employee_id == employee_id, EventLog.organization_id == org.id)
         .order_by(EventLog.event_date.desc(), EventLog.created_at.desc())
         .limit(50)
@@ -378,9 +632,12 @@ def create_employee(
     request: Request,
     user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
 ):
     user, org = user_and_org
-    existing = db.query(EmployeeProfile).filter(
+    check_onboarding_guard(org)
+
+    existing = tenant_db.query(EmployeeProfile).filter(
         EmployeeProfile.organization_id == org.id,
         EmployeeProfile.employee_code == payload.employee_code,
     ).first()
@@ -388,7 +645,7 @@ def create_employee(
         raise HTTPException(status_code=400, detail="Employee code already exists in this organization")
 
     if payload.birthday_template_id:
-        bt = db.query(EventTemplate).filter(
+        bt = tenant_db.query(EventTemplate).filter(
             EventTemplate.id == payload.birthday_template_id,
             EventTemplate.organization_id == org.id,
             EventTemplate.event_type == EventType.BIRTHDAY,
@@ -397,7 +654,7 @@ def create_employee(
             raise HTTPException(status_code=400, detail="Invalid birthday template selected")
 
     if payload.anniversary_template_id:
-        at = db.query(EventTemplate).filter(
+        at = tenant_db.query(EventTemplate).filter(
             EventTemplate.id == payload.anniversary_template_id,
             EventTemplate.organization_id == org.id,
             EventTemplate.event_type == EventType.WORK_ANNIVERSARY,
@@ -408,7 +665,12 @@ def create_employee(
     emp_data = payload.model_dump()
     emp_data["organization_id"] = org.id
     emp = EmployeeProfile(**emp_data)
-    db.add(emp)
+    tenant_db.add(emp)
+    tenant_db.commit()
+    tenant_db.refresh(emp)
+
+    # Update cached employee count in platform db
+    org.cached_employee_count = tenant_db.query(EmployeeProfile).filter(EmployeeProfile.organization_id == org.id).count()
     record_audit_log(
         db,
         action="EMPLOYEE_CREATED",
@@ -422,7 +684,6 @@ def create_employee(
         ip_address=request.client.host if request.client else None,
     )
     db.commit()
-    db.refresh(emp)
     return emp
 
 
@@ -433,9 +694,10 @@ def update_employee(
     request: Request,
     user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
 ):
     user, org = user_and_org
-    emp = db.query(EmployeeProfile).filter(
+    emp = tenant_db.query(EmployeeProfile).filter(
         EmployeeProfile.id == employee_id,
         EmployeeProfile.organization_id == org.id,
     ).first()
@@ -443,7 +705,7 @@ def update_employee(
         raise HTTPException(status_code=404, detail="Employee not found")
 
     if payload.birthday_template_id:
-        bt = db.query(EventTemplate).filter(
+        bt = tenant_db.query(EventTemplate).filter(
             EventTemplate.id == payload.birthday_template_id,
             EventTemplate.organization_id == org.id,
             EventTemplate.event_type == EventType.BIRTHDAY,
@@ -452,7 +714,7 @@ def update_employee(
             raise HTTPException(status_code=400, detail="Invalid birthday template selected")
 
     if payload.anniversary_template_id:
-        at = db.query(EventTemplate).filter(
+        at = tenant_db.query(EventTemplate).filter(
             EventTemplate.id == payload.anniversary_template_id,
             EventTemplate.organization_id == org.id,
             EventTemplate.event_type == EventType.WORK_ANNIVERSARY,
@@ -462,7 +724,7 @@ def update_employee(
 
     data = payload.model_dump(exclude_unset=True)
     if "employee_code" in data and data["employee_code"] != emp.employee_code:
-        conflict = db.query(EmployeeProfile).filter(
+        conflict = tenant_db.query(EmployeeProfile).filter(
             EmployeeProfile.organization_id == org.id,
             EmployeeProfile.employee_code == data["employee_code"],
         ).first()
@@ -484,8 +746,9 @@ def update_employee(
         details=f"Updated employee {emp.full_name} ({', '.join(data.keys())})",
         ip_address=request.client.host if request.client else None,
     )
+    tenant_db.commit()
+    tenant_db.refresh(emp)
     db.commit()
-    db.refresh(emp)
     return emp
 
 
@@ -495,11 +758,17 @@ async def upload_employees_csv(
     file: UploadFile = File(...),
     user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
 ):
     """Bulk imports/updates employees via CSV with automatic field mapping."""
     user, org = user_and_org
+    check_onboarding_guard(org)
+
     content = await file.read()
-    imported, updated, failed, raw_errors = import_employees_from_csv(db, org.id, content)
+    imported, updated, failed, raw_errors = import_employees_from_csv(tenant_db, org.id, content)
+
+    # Update cached employee count in platform db
+    org.cached_employee_count = tenant_db.query(EmployeeProfile).filter(EmployeeProfile.organization_id == org.id).count()
 
     record_audit_log(
         db,
@@ -532,19 +801,20 @@ async def upload_employees_csv(
 @router.get("/templates", response_model=list[EventTemplateOut])
 def list_templates(
     org: Organization = Depends(get_current_org),
-    db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
 ):
     templates = (
-        db.query(EventTemplate)
+        tenant_db.query(EventTemplate)
         .filter(EventTemplate.organization_id == org.id)
         .order_by(EventTemplate.event_type.asc(), EventTemplate.is_default.desc(), EventTemplate.name.asc())
         .all()
     )
     if not templates:
         from app.seed import seed_default_templates
-        seed_default_templates(db, org.id)
+        seed_default_templates(tenant_db, org.id)
+        tenant_db.commit()
         templates = (
-            db.query(EventTemplate)
+            tenant_db.query(EventTemplate)
             .filter(EventTemplate.organization_id == org.id)
             .order_by(EventTemplate.event_type.asc(), EventTemplate.is_default.desc(), EventTemplate.name.asc())
             .all()
@@ -558,6 +828,7 @@ def create_template(
     request: Request,
     user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
 ):
     user, org = user_and_org
 
@@ -576,7 +847,7 @@ def create_template(
 
     # If marked as default, unset existing defaults for this event type
     if payload.is_default:
-        db.query(EventTemplate).filter(
+        tenant_db.query(EventTemplate).filter(
             EventTemplate.organization_id == org.id,
             EventTemplate.event_type == payload.event_type,
         ).update({"is_default": False})
@@ -591,8 +862,9 @@ def create_template(
         is_active=payload.is_active,
         is_default=payload.is_default,
     )
-    db.add(new_tmpl)
-    db.flush()
+    tenant_db.add(new_tmpl)
+    tenant_db.commit()
+    tenant_db.refresh(new_tmpl)
 
     record_audit_log(
         db,
@@ -607,7 +879,6 @@ def create_template(
         ip_address=request.client.host if request.client else None,
     )
     db.commit()
-    db.refresh(new_tmpl)
     return new_tmpl
 
 
@@ -618,9 +889,10 @@ def update_template(
     request: Request,
     user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
 ):
     user, org = user_and_org
-    template = db.query(EventTemplate).filter(
+    template = tenant_db.query(EventTemplate).filter(
         EventTemplate.id == template_id,
         EventTemplate.organization_id == org.id,
     ).first()
@@ -637,7 +909,7 @@ def update_template(
 
     # If setting is_default=True, unset other defaults for this event type
     if payload.is_default is True:
-        db.query(EventTemplate).filter(
+        tenant_db.query(EventTemplate).filter(
             EventTemplate.organization_id == org.id,
             EventTemplate.event_type == template.event_type,
             EventTemplate.id != template.id,
@@ -660,8 +932,9 @@ def update_template(
         details=f"Updated template '{template.name or template.variant_key}' ({template.event_type.value}/{template.variant_key}, default={template.is_default})",
         ip_address=request.client.host if request.client else None,
     )
+    tenant_db.commit()
+    tenant_db.refresh(template)
     db.commit()
-    db.refresh(template)
     return template
 
 
@@ -671,9 +944,10 @@ def delete_template(
     request: Request,
     user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
 ):
     user, org = user_and_org
-    template = db.query(EventTemplate).filter(
+    template = tenant_db.query(EventTemplate).filter(
         EventTemplate.id == template_id,
         EventTemplate.organization_id == org.id,
     ).first()
@@ -687,12 +961,12 @@ def delete_template(
         )
 
     # Disassociate from employees if assigned
-    db.query(EmployeeProfile).filter(
+    tenant_db.query(EmployeeProfile).filter(
         EmployeeProfile.organization_id == org.id,
         EmployeeProfile.birthday_template_id == template.id,
     ).update({"birthday_template_id": None})
 
-    db.query(EmployeeProfile).filter(
+    tenant_db.query(EmployeeProfile).filter(
         EmployeeProfile.organization_id == org.id,
         EmployeeProfile.anniversary_template_id == template.id,
     ).update({"anniversary_template_id": None})
@@ -710,7 +984,8 @@ def delete_template(
         ip_address=request.client.host if request.client else None,
     )
 
-    db.delete(template)
+    tenant_db.delete(template)
+    tenant_db.commit()
     db.commit()
     return {"message": "Template successfully deleted", "template_id": template_id}
 
@@ -748,11 +1023,11 @@ def preview_template(
 def get_stats_summary(
     days: int = Query(default=30, ge=1, le=365),
     org: Organization = Depends(get_current_org),
-    db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
 ):
-    total_employees = db.query(EmployeeProfile).filter(EmployeeProfile.organization_id == org.id).count()
+    total_employees = tenant_db.query(EmployeeProfile).filter(EmployeeProfile.organization_id == org.id).count()
     active_employees = (
-        db.query(EmployeeProfile)
+        tenant_db.query(EmployeeProfile)
         .filter(EmployeeProfile.organization_id == org.id, EmployeeProfile.is_active.is_(True))
         .count()
     )
@@ -763,7 +1038,7 @@ def get_stats_summary(
 
     # Today's event stats
     today_rows = (
-        db.query(EventLog.status, func.count(EventLog.id))
+        tenant_db.query(EventLog.status, func.count(EventLog.id))
         .filter(EventLog.organization_id == org.id, EventLog.batch_id == today_batch)
         .group_by(EventLog.status)
         .all()
@@ -781,7 +1056,7 @@ def get_stats_summary(
     date_counts: dict[str, dict[EventStatus, int]] = {}
 
     log_rows = (
-        db.query(EventLog.batch_id, EventLog.status, func.count(EventLog.id))
+        tenant_db.query(EventLog.batch_id, EventLog.status, func.count(EventLog.id))
         .filter(
             EventLog.organization_id == org.id,
             EventLog.event_date >= start_date,
@@ -814,10 +1089,10 @@ def get_stats_summary(
     emp_cache: dict[str, EmployeeProfile] = {}
     for i in range(1, 8):
         future_date = today + timedelta(days=i)
-        due = find_due_events(db, future_date, organization_id=org.id, leap_day_policy=org.leap_day_policy)
+        due = find_due_events(tenant_db, future_date, organization_id=org.id, leap_day_policy=org.leap_day_policy)
         for e in due:
             if e.employee_id not in emp_cache:
-                emp = db.get(EmployeeProfile, e.employee_id)
+                emp = tenant_db.get(EmployeeProfile, e.employee_id)
                 if emp:
                     emp_cache[e.employee_id] = emp
             emp_obj = emp_cache.get(e.employee_id)
@@ -852,10 +1127,16 @@ def get_stats_summary(
 
 @router.post("/hrms-sync/trigger", response_model=HrmsSyncResponse)
 def trigger_hrms_sync(
-    org: Organization = Depends(get_current_org),
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
 ):
-    created, updated = sync_employees(db)
+    _, org = user_and_org
+    check_onboarding_guard(org)
+
+    created, updated = sync_employees(tenant_db)
+    org.cached_employee_count = tenant_db.query(EmployeeProfile).filter(EmployeeProfile.organization_id == org.id).count()
+    db.commit()
     return HrmsSyncResponse(
         created=created,
         updated=updated,
@@ -873,9 +1154,9 @@ def list_digests(
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     org: Organization = Depends(get_current_org),
-    db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
 ):
-    q = db.query(DigestLog).filter(DigestLog.organization_id == org.id)
+    q = tenant_db.query(DigestLog).filter(DigestLog.organization_id == org.id)
     total = q.count()
     items = q.order_by(DigestLog.created_at.desc()).offset(offset).limit(limit).all()
     return PaginatedDigestsOut(items=items, total=total, limit=limit, offset=offset)
@@ -885,13 +1166,12 @@ def list_digests(
 def get_digest(
     batch_id: str,
     org: Organization = Depends(get_current_org),
-    db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
 ):
-    digest = db.query(DigestLog).filter(
+    digest = tenant_db.query(DigestLog).filter(
         DigestLog.batch_id == batch_id,
         DigestLog.organization_id == org.id,
     ).first()
     if not digest:
         raise HTTPException(status_code=404, detail="No digest for this batch_id")
     return digest
-

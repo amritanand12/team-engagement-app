@@ -204,10 +204,21 @@ export interface Organization {
   business_timezone: string;
   leap_day_policy: string;
   digest_channel_id: string;
+  db_host: string | null;
+  db_port: number | null;
+  db_name: string | null;
+  db_user: string | null;
+  db_ssl_mode: string | null;
+  is_db_configured: boolean;
   smtp_host: string | null;
   smtp_port: number | null;
   smtp_username: string | null;
   smtp_from_address: string | null;
+  smtp_use_tls: boolean;
+  is_smtp_configured: boolean;
+  is_setup_complete: boolean;
+  cached_employee_count: number;
+  cached_event_count: number;
   slack_webhook_url: string | null;
   teams_webhook_url: string | null;
   is_active: boolean;
@@ -221,13 +232,51 @@ export interface OrganizationUpdatePayload {
   business_timezone?: string;
   leap_day_policy?: string;
   digest_channel_id?: string;
+  db_host?: string | null;
+  db_port?: number | null;
+  db_name?: string | null;
+  db_user?: string | null;
+  db_password?: string | null;
+  db_ssl_mode?: string | null;
   smtp_host?: string | null;
   smtp_port?: number | null;
   smtp_username?: string | null;
   smtp_password?: string | null;
   smtp_from_address?: string | null;
+  smtp_use_tls?: boolean;
   slack_webhook_url?: string | null;
   teams_webhook_url?: string | null;
+}
+
+export interface TestDbConnectionPayload {
+  db_host: string;
+  db_port: number;
+  db_name: string;
+  db_user: string;
+  db_password: string;
+  db_ssl_mode?: string;
+}
+
+export interface TestDbConnectionResponse {
+  success: boolean;
+  latency_ms: number | null;
+  server_version: string | null;
+  message: string;
+}
+
+export interface TestSmtpConnectionPayload {
+  smtp_host: string;
+  smtp_port: number;
+  smtp_username?: string;
+  smtp_password?: string;
+  smtp_from_address: string;
+  smtp_use_tls?: boolean;
+  test_recipient?: string;
+}
+
+export interface TestSmtpConnectionResponse {
+  success: boolean;
+  message: string;
 }
 
 export interface CsvImportError {

@@ -64,7 +64,7 @@ const AppContent: React.FC = () => {
         }
         return (
           <SuperAdminPage
-            key={refreshKey}
+            key={tenantKey}
             onSwitchToTenant={() => setActiveTab('overview')}
           />
         );
@@ -73,15 +73,18 @@ const AppContent: React.FC = () => {
           <OverviewPage
             key={tenantKey}
             onNavigateTab={(tab) => setActiveTab(tab)}
-            onOpenScanModal={() => {
-              // Triggered via Header / Layout
-            }}
+            onOpenScanModal={() => {}}
           />
         );
       case 'events':
         return <EventsPage key={tenantKey} />;
       case 'employees':
-        return <EmployeesPage key={tenantKey} />;
+        return (
+          <EmployeesPage
+            key={tenantKey}
+            onNavigateTab={(tab) => setActiveTab(tab)}
+          />
+        );
       case 'digests':
         return <DigestsPage key={tenantKey} />;
       case 'templates':
@@ -89,7 +92,13 @@ const AppContent: React.FC = () => {
       case 'settings':
         return <SettingsPage key={tenantKey} />;
       default:
-        return <OverviewPage key={tenantKey} onNavigateTab={(tab) => setActiveTab(tab)} onOpenScanModal={() => {}} />;
+        return (
+          <OverviewPage
+            key={tenantKey}
+            onNavigateTab={(tab) => setActiveTab(tab)}
+            onOpenScanModal={() => {}}
+          />
+        );
     }
   };
 

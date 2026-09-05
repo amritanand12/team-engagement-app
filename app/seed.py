@@ -56,6 +56,7 @@ def seed_default_templates(db: Session, organization_id: str) -> int:
                 EventTemplate.organization_id == organization_id,
                 EventTemplate.event_type == tpl["event_type"],
                 EventTemplate.variant_key == tpl["variant_key"],
+                EventTemplate.is_active.is_(True),
             )
             .first()
         )
@@ -148,6 +149,9 @@ def seed_default_organization(db: Session) -> Organization:
             digest_channel_id=settings.DEFAULT_DIGEST_CHANNEL_ID,
             is_active=True,
             is_demo=False,
+            is_setup_complete=True,
+            is_db_configured=False,
+            is_smtp_configured=True,
         )
         db.add(org)
         db.commit()

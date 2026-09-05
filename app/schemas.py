@@ -263,10 +263,21 @@ class OrganizationOut(BaseModel):
     business_timezone: str
     leap_day_policy: str
     digest_channel_id: str
+    db_host: str | None = None
+    db_port: int | None = None
+    db_name: str | None = None
+    db_user: str | None = None
+    db_ssl_mode: str | None = None
+    is_db_configured: bool = False
     smtp_host: str | None = None
     smtp_port: int | None = None
     smtp_username: str | None = None
     smtp_from_address: str | None = None
+    smtp_use_tls: bool = True
+    is_smtp_configured: bool = False
+    is_setup_complete: bool = False
+    cached_employee_count: int = 0
+    cached_event_count: int = 0
     slack_webhook_url: str | None = None
     teams_webhook_url: str | None = None
     is_active: bool
@@ -280,13 +291,51 @@ class OrganizationUpdateIn(BaseModel):
     business_timezone: str | None = None
     leap_day_policy: str | None = None
     digest_channel_id: str | None = None
+    db_host: str | None = None
+    db_port: int | None = None
+    db_name: str | None = None
+    db_user: str | None = None
+    db_password: str | None = None
+    db_ssl_mode: str | None = None
     smtp_host: str | None = None
     smtp_port: int | None = None
     smtp_username: str | None = None
     smtp_password: str | None = None
     smtp_from_address: str | None = None
+    smtp_use_tls: bool | None = None
     slack_webhook_url: str | None = None
     teams_webhook_url: str | None = None
+
+
+class TestDbConnectionIn(BaseModel):
+    db_host: str
+    db_port: int = 5432
+    db_name: str
+    db_user: str
+    db_password: str
+    db_ssl_mode: str = "prefer"
+
+
+class TestDbConnectionOut(BaseModel):
+    success: bool
+    latency_ms: float | None = None
+    server_version: str | None = None
+    message: str
+
+
+class TestSmtpConnectionIn(BaseModel):
+    smtp_host: str
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from_address: str
+    smtp_use_tls: bool = True
+    test_recipient: str | None = None
+
+
+class TestSmtpConnectionOut(BaseModel):
+    success: bool
+    message: str
 
 
 class OrganizationCreateIn(BaseModel):

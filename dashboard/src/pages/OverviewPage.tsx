@@ -4,6 +4,7 @@ import { StatsSummary } from '../types';
 import { Badge } from '../components/common/Badge';
 import { Avatar } from '../components/common/Avatar';
 import { CardSkeleton, Skeleton } from '../components/common/Skeleton';
+import { useAuth } from '../context/AuthContext';
 import {
   Users,
   Send,
@@ -15,6 +16,10 @@ import {
   RefreshCw,
   AlertCircle,
   Crown,
+  Database,
+  Mail,
+  CheckCircle2,
+  ArrowRight,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -28,11 +33,12 @@ import {
 } from 'recharts';
 
 interface OverviewPageProps {
-  onNavigateTab: (tab: 'events' | 'employees' | 'digests' | 'templates' | 'superadmin') => void;
+  onNavigateTab: (tab: 'events' | 'employees' | 'digests' | 'templates' | 'superadmin' | 'settings') => void;
   onOpenScanModal: () => void;
 }
 
 export const OverviewPage: React.FC<OverviewPageProps> = ({ onNavigateTab, onOpenScanModal }) => {
+  const { activeOrg } = useAuth();
   const [stats, setStats] = useState<StatsSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -125,6 +131,88 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onNavigateTab, onOpe
 
   return (
     <div className="space-y-8">
+      {/* Onboarding Checklist if Setup Incomplete */}
+      {activeOrg && !activeOrg.is_setup_complete && !activeOrg.is_demo && (
+        <div className="p-6 rounded-3xl bg-white border border-amber-200 shadow-md space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-100 pb-4">
+            <div className="flex items-start sm:items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-200 shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-sm font-bold text-slate-900">
+                  Setup Required: Bring Your Own Database & Email Provider
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  You cannot add your data before you configure your database and email provider service. Complete the 2 steps below:
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigateTab('settings')}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold shadow-sm transition-colors shrink-0 cursor-pointer"
+            >
+              <span>Configure in Settings</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+            <div className={`p-4 rounded-2xl border ${activeOrg.is_db_configured ? 'bg-emerald-50/50 border-emerald-200' : 'bg-amber-50/50 border-amber-200'}`}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 font-bold text-slate-800">
+                  <Database className="w-4 h-4 text-blue-600" />
+                  <span>1. PostgreSQL Database</span>
+                </div>
+                {activeOrg.is_db_configured ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Done
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-semibold text-amber-700">Required</span>
+                )}
+              </div>
+              <p className="text-slate-500 text-[11px]">
+                {activeOrg.is_db_configured ? 'Dedicated PostgreSQL database provisioned.' : 'Connect your private database to store employee records.'}
+              </p>
+            </div>
+
+            <div className={`p-4 rounded-2xl border ${activeOrg.is_smtp_configured ? 'bg-emerald-50/50 border-emerald-200' : 'bg-amber-50/50 border-amber-200'}`}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 font-bold text-slate-800">
+                  <Mail className="w-4 h-4 text-indigo-600" />
+                  <span>2. SMTP Email Provider</span>
+                </div>
+                {activeOrg.is_smtp_configured ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Done
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-semibold text-amber-700">Required</span>
+                )}
+              </div>
+              <p className="text-slate-500 text-[11px]">
+                {activeOrg.is_smtp_configured ? 'Corporate SMTP verified and ready to send.' : 'Configure corporate SMTP or transactional relay for celebrations.'}
+              </p>
+            </div>
+
+            <div className="p-4 rounded-2xl border bg-slate-50/70 border-slate-200 opacity-80">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 font-bold text-slate-800">
+                  <Users className="w-4 h-4 text-slate-600" />
+                  <span>3. Add Team Members</span>
+                </div>
+                <span className="text-[11px] font-semibold text-slate-500">Locked</span>
+              </div>
+              <p className="text-slate-500 text-[11px]">
+                Unlocked automatically once steps 1 and 2 are complete.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top Banner / Hero */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-slate-900 via-slate-800 to-rose-950 p-6 sm:p-8 text-white shadow-xl">
         <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">

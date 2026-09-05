@@ -11,11 +11,16 @@ import {
   TemplatePreviewResponse,
   EventType,
   HrmsSyncResponse,
+  Organization,
   PaginatedDigests,
   PaginatedEmployees,
   ResendResponse,
   ScanTriggerResponse,
   StatsSummary,
+  TestDbConnectionPayload,
+  TestDbConnectionResponse,
+  TestSmtpConnectionPayload,
+  TestSmtpConnectionResponse,
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
@@ -264,9 +269,37 @@ export const api = {
     return apiFetch<any>('/admin/organization');
   },
 
-  updateOrganization: async (payload: any): Promise<any> => {
-    return apiFetch<any>('/admin/organization', {
+  updateOrganization: async (payload: any): Promise<Organization> => {
+    return apiFetch<Organization>('/admin/organization', {
       method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  testDatabaseConnection: async (payload: TestDbConnectionPayload): Promise<TestDbConnectionResponse> => {
+    return apiFetch<TestDbConnectionResponse>('/admin/settings/test-db', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  saveDatabaseConfiguration: async (payload: TestDbConnectionPayload): Promise<Organization> => {
+    return apiFetch<Organization>('/admin/settings/database', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  testSmtpConnection: async (payload: TestSmtpConnectionPayload): Promise<TestSmtpConnectionResponse> => {
+    return apiFetch<TestSmtpConnectionResponse>('/admin/settings/test-smtp', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  saveSmtpConfiguration: async (payload: TestSmtpConnectionPayload): Promise<Organization> => {
+    return apiFetch<Organization>('/admin/settings/smtp', {
+      method: 'POST',
       body: JSON.stringify(payload),
     });
   },

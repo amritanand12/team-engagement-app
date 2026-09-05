@@ -23,8 +23,15 @@ import {
   X,
   UploadCloud,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
-export const EmployeesPage: React.FC = () => {
+interface EmployeesPageProps {
+  onNavigateTab?: (tab: 'events' | 'employees' | 'digests' | 'templates' | 'superadmin' | 'settings') => void;
+}
+
+export const EmployeesPage: React.FC<EmployeesPageProps> = ({ onNavigateTab }) => {
+  const { activeOrg } = useAuth();
+  const isSetupIncomplete = Boolean(activeOrg && !activeOrg.is_setup_complete && !activeOrg.is_demo);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [total, setTotal] = useState(0);
   const [limit, setLimit] = useState(25);
@@ -235,6 +242,32 @@ export const EmployeesPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Onboarding Warning Banner if Setup Incomplete */}
+      {isSetupIncomplete && (
+        <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-start sm:items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5 sm:mt-0" />
+            <div className="text-xs">
+              <p className="font-bold text-amber-950">
+                You cannot add your data before you configure your database and email provider service.
+              </p>
+              <p className="text-amber-800 mt-0.5">
+                Connect your private PostgreSQL database and verified SMTP email provider in Settings to unlock adding or importing employee records.
+              </p>
+            </div>
+          </div>
+          {onNavigateTab && (
+            <button
+              type="button"
+              onClick={() => onNavigateTab('settings')}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold shrink-0 cursor-pointer shadow-sm transition-colors"
+            >
+              <span>Configure in Settings →</span>
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Top Header & Search / Filter */}
       <div className="p-5 rounded-2xl bg-white border border-slate-100 shadow-sm space-y-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -248,23 +281,43 @@ export const EmployeesPage: React.FC = () => {
             <button
               type="button"
               onClick={fetchEmployees}
-              className="p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-xs transition-colors"
+              className="p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-xs transition-colors cursor-pointer"
               title="Refresh Directory"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
             <button
               type="button"
-              onClick={() => setIsCsvModalOpen(true)}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-xs transition-colors"
+              onClick={() => {
+                if (isSetupIncomplete) {
+                  toast.error('Setup Required', 'You cannot add your data before you configure your database and email provider service.');
+                  return;
+                }
+                setIsCsvModalOpen(true);
+              }}
+              disabled={isSetupIncomplete}
+              title={isSetupIncomplete ? 'You cannot add your data before you configure your database and email provider service.' : 'Import CSV'}
+              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 bg-white text-slate-700 text-xs font-semibold shadow-xs transition-colors ${
+                isSetupIncomplete ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-50 cursor-pointer'
+              }`}
             >
               <UploadCloud className="w-4 h-4 text-rose-500" />
               <span>Import CSV</span>
             </button>
             <button
               type="button"
-              onClick={openCreateModal}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-sm transition-colors"
+              onClick={() => {
+                if (isSetupIncomplete) {
+                  toast.error('Setup Required', 'You cannot add your data before you configure your database and email provider service.');
+                  return;
+                }
+                openCreateModal();
+              }}
+              disabled={isSetupIncomplete}
+              title={isSetupIncomplete ? 'You cannot add your data before you configure your database and email provider service.' : 'Add Employee'}
+              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold shadow-sm transition-colors ${
+                isSetupIncomplete ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-800 cursor-pointer'
+              }`}
             >
               <Plus className="w-4 h-4" />
               <span>Add Employee</span>

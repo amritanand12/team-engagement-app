@@ -36,12 +36,14 @@ class SMTPMailer(BaseMailer):
         username: str | None = None,
         password: str | None = None,
         from_address: str | None = None,
+        use_tls: bool = True,
     ):
         self.host = host or settings.SMTP_HOST
         self.port = port or settings.SMTP_PORT
         self.username = username or settings.SMTP_USERNAME
         self.password = password or settings.SMTP_PASSWORD
         self.from_address = from_address or settings.SMTP_FROM_ADDRESS
+        self.use_tls = use_tls
 
     def send(self, to: str, subject: str, html: str) -> None:
         if self.host in ("smtp.example.com", "example.com", ""):
@@ -58,7 +60,8 @@ class SMTPMailer(BaseMailer):
 
         try:
             with smtplib.SMTP(self.host, self.port, timeout=15) as server:
-                server.starttls()
+                if self.use_tls:
+                    server.starttls()
                 if self.username:
                     server.login(self.username, self.password)
                 server.sendmail(self.from_address, [to], msg.as_string())
@@ -85,12 +88,16 @@ def get_mailer(org: object | None = None) -> BaseMailer:
     if settings.MAIL_PROVIDER == "mock" or settings.TESTING:
         return MockMailer()
     if org and getattr(org, "smtp_host", None):
+        from app.services.crypto import decrypt_credential
+        raw_pw = getattr(org, "smtp_password", None)
+        decrypted_pw = decrypt_credential(raw_pw) if raw_pw else None
         return SMTPMailer(
             host=getattr(org, "smtp_host", None),
             port=getattr(org, "smtp_port", None),
             username=getattr(org, "smtp_username", None),
-            password=getattr(org, "smtp_password", None),
+            password=decrypted_pw,
             from_address=getattr(org, "smtp_from_address", None),
+            use_tls=getattr(org, "smtp_use_tls", True),
         )
     return SMTPMailer()
 

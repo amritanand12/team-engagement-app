@@ -330,6 +330,7 @@ export const TemplatesPage: React.FC = () => {
               )}
             </div>
             <p className="leading-relaxed text-rose-800">
+              Create and manage multiple HTML email designs for Birthdays and Work Anniversaries.
               Each tenant maintains its own isolated catalog of templates. Configure custom HTML designs with live preview, set an <strong>Organization Default</strong>, or assign <strong>specific templates</strong> to individual members.
             </p>
           </div>
