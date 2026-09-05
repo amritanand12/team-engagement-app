@@ -17,6 +17,9 @@ import {
   RefreshCw,
   Clock,
   Sparkles,
+  Lock,
+  Key,
+  Trash2,
 } from 'lucide-react';
 
 interface SuperAdminPageProps {
@@ -30,6 +33,12 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ onSwitchToTenant
   const [orgs, setOrgs] = useState<SuperAdminOrg[]>([]);
   const [loading, setLoading] = useState(true);
   const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
+
+  // Reset Password Modal
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [resettingOrg, setResettingOrg] = useState<SuperAdminOrg | null>(null);
+  const [newTenantPassword, setNewTenantPassword] = useState('');
+  const [resettingPassword, setResettingPassword] = useState(false);
 
   // Create Tenant Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -105,6 +114,51 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ onSwitchToTenant
     switchTenant(org.id, org as any);
     toast.info('Switched Tenant Context', `Now managing "${org.name}".`);
     onSwitchToTenant();
+  };
+
+  const openResetPasswordModal = (org: SuperAdminOrg) => {
+    setResettingOrg(org);
+    setNewTenantPassword('');
+    setIsResetModalOpen(true);
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resettingOrg || !newTenantPassword.trim()) return;
+    if (newTenantPassword.length < 8) {
+      toast.error('Invalid Password', 'New password must be at least 8 characters long.');
+      return;
+    }
+
+    setResettingPassword(true);
+    try {
+      const res = await api.resetTenantPassword(resettingOrg.id, newTenantPassword);
+      toast.success('Password Reset', res.message || `Password reset for ${resettingOrg.name}`);
+      setIsResetModalOpen(false);
+      setNewTenantPassword('');
+      setResettingOrg(null);
+    } catch (err: any) {
+      toast.error('Reset Failed', err.message);
+    } finally {
+      setResettingPassword(false);
+    }
+  };
+
+  const handleDeleteOrg = async (org: SuperAdminOrg) => {
+    if (
+      !window.confirm(
+        `Are you sure you want to permanently delete "${org.name}"? All employees, events, templates, and delivery settings for this tenant will be permanently removed.`
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.deleteOrganization(org.id);
+      toast.success('Organization Deleted', `"${org.name}" has been permanently deleted.`);
+      fetchOrganizations();
+    } catch (err: any) {
+      toast.error('Deletion Failed', err.message);
+    }
   };
 
   const copyKey = (org: SuperAdminOrg) => {
@@ -283,6 +337,24 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ onSwitchToTenant
 
                       <button
                         type="button"
+                        onClick={() => openResetPasswordModal(org)}
+                        className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-amber-600 hover:bg-amber-50 hover:border-amber-200 transition-colors"
+                        title="Reset Tenant Admin Password"
+                      >
+                        <Key className="w-3.5 h-3.5 text-amber-500" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteOrg(org)}
+                        className="p-1.5 rounded-lg border border-slate-200 text-slate-400 hover:text-rose-600 hover:bg-rose-50 hover:border-rose-200 transition-colors"
+                        title="Permanently Delete Organization"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                      </button>
+
+                      <button
+                        type="button"
                         onClick={() => handleSwitchTenant(org)}
                         className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold text-[11px] shadow-xs transition-colors"
                       >
@@ -418,6 +490,58 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ onSwitchToTenant
             >
               <Sparkles className="w-4 h-4" />
               <span>{submitting ? 'Provisioning...' : 'Provision Tenant'}</span>
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Reset Tenant Admin Password Modal */}
+      <Modal
+        isOpen={isResetModalOpen}
+        onClose={() => {
+          setIsResetModalOpen(false);
+          setResettingOrg(null);
+          setNewTenantPassword('');
+        }}
+        title={`Reset Admin Password: ${resettingOrg?.name || ''}`}
+        maxWidth="md"
+      >
+        <form onSubmit={handleResetPassword} className="space-y-4 text-xs">
+          <p className="text-slate-600">
+            Set a new temporary or permanent password for the administrator of <strong className="text-slate-900">{resettingOrg?.name}</strong>.
+          </p>
+
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1">New Password (min 8 characters) *</label>
+            <input
+              type="password"
+              required
+              placeholder="••••••••"
+              value={newTenantPassword}
+              onChange={(e) => setNewTenantPassword(e.target.value)}
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => {
+                setIsResetModalOpen(false);
+                setResettingOrg(null);
+                setNewTenantPassword('');
+              }}
+              className="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 font-semibold hover:bg-slate-100 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={resettingPassword || newTenantPassword.length < 8}
+              className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-semibold shadow-md transition-colors disabled:opacity-50"
+            >
+              <Key className="w-4 h-4" />
+              <span>{resettingPassword ? 'Resetting...' : 'Reset Password'}</span>
             </button>
           </div>
         </form>

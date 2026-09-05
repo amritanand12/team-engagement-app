@@ -231,3 +231,31 @@ class DigestLog(Base):
     __table_args__ = (
         UniqueConstraint("organization_id", "batch_id", name="uq_org_digest_batch"),
     )
+
+
+class AuditLog(Base):
+    """
+    Administrative and security audit trail.
+    Tracks authentication, tenant provisioning, configuration changes, and pipeline triggers.
+    """
+    __tablename__ = "audit_log"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    organization_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("organization.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    actor_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    actor_email: Mapped[str] = mapped_column(String(255), index=True)
+    actor_role: Mapped[str] = mapped_column(String(64), index=True)
+    action: Mapped[str] = mapped_column(String(100), index=True)
+    resource_type: Mapped[str] = mapped_column(String(64), index=True)
+    resource_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    organization: Mapped["Organization | None"] = relationship()
+
+    @property
+    def organization_name(self) -> str | None:
+        return self.organization.name if self.organization else None

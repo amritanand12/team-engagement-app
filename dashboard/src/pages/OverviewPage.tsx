@@ -14,6 +14,7 @@ import {
   TrendingUp,
   RefreshCw,
   AlertCircle,
+  Crown,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -27,7 +28,7 @@ import {
 } from 'recharts';
 
 interface OverviewPageProps {
-  onNavigateTab: (tab: 'events' | 'employees' | 'digests' | 'templates') => void;
+  onNavigateTab: (tab: 'events' | 'employees' | 'digests' | 'templates' | 'superadmin') => void;
   onOpenScanModal: () => void;
 }
 
@@ -73,6 +74,31 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onNavigateTab, onOpe
   }
 
   if (error && !stats) {
+    const isNoOrg = error.toLowerCase().includes('no active organization');
+    if (isNoOrg) {
+      return (
+        <div className="p-10 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center space-y-4 max-w-lg mx-auto mt-10">
+          <div className="w-14 h-14 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center border border-purple-100 shadow-inner">
+            <Crown className="w-7 h-7" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-slate-900">No Tenant Organization Selected</h3>
+            <p className="text-xs text-slate-500 mt-1 max-w-sm">
+              You are currently signed in as Platform SuperAdmin. Engagement metrics, birthdays, and anniversaries are tracked per organization.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onNavigateTab('superadmin')}
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold shadow-md shadow-purple-900/20 transition-all cursor-pointer"
+          >
+            <Crown className="w-4 h-4" />
+            <span>Open Platform Hub</span>
+          </button>
+        </div>
+      );
+    }
+
     return (
       <div className="p-8 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 flex flex-col items-center justify-center text-center space-y-3">
         <AlertCircle className="w-10 h-10 text-rose-500" />

@@ -104,7 +104,9 @@ def persist_due_events(db: Session, due_events: list[DueEvent], batch_id: str) -
     if not due_events:
         return 0
 
-    is_sqlite = engine.dialect.name == "sqlite"
+    bind = db.get_bind() if hasattr(db, "get_bind") else None
+    dialect_name = bind.dialect.name if bind else engine.dialect.name
+    is_sqlite = dialect_name == "sqlite"
     insert_fn = sqlite_insert if is_sqlite else pg_insert
 
     rows = [

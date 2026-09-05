@@ -338,3 +338,42 @@ class CreateTenantIn(BaseModel):
     business_timezone: str = "Asia/Kolkata"
     leap_day_policy: str = "feb28"
 
+
+class ChangePasswordIn(BaseModel):
+    current_password: str
+    new_password: str
+    confirm_password: str
+
+
+class ResetPasswordIn(BaseModel):
+    new_password: str
+
+
+class ChangePasswordResponse(BaseModel):
+    success: bool
+    message: str
+
+
+class AuditLogOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    organization_id: str | None = None
+    organization_name: str | None = None
+    actor_id: str | None = None
+    actor_email: str
+    actor_role: str
+    action: str
+    resource_type: str
+    resource_id: str | None = None
+    details: str | None = None
+    ip_address: str | None = None
+    created_at: datetime
+
+
+class PaginatedAuditLogsOut(BaseModel):
+    items: list[AuditLogOut]
+    total: int
+    limit: int
+    offset: int
+

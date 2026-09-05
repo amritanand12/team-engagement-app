@@ -43,7 +43,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [initializing, setInitializing] = useState<boolean>(true);
 
   const restoreSession = async () => {
-    if (token || apiKey) {
+    if (token) {
       try {
         const profile = await api.getCurrentProfile();
         setUser(profile.user);
@@ -57,6 +57,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(null);
         setActiveOrg(null);
       }
+    } else {
+      clearStoredApiKey();
+      setApiKey(null);
     }
     setInitializing(false);
   };
@@ -83,6 +86,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setToken(res.access_token);
       setUser(res.user);
       setActiveOrg(res.organization);
+      if (res.user.role !== 'super_admin') {
+        clearStoredTenantId();
+        setSelectedTenantId(null);
+      }
       return true;
     } catch (err: any) {
       setAuthError(err.message || 'Invalid email or password');
@@ -90,26 +97,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const loginWithApiKey = async (key: string): Promise<boolean> => {
-    const trimmed = key.trim();
-    if (!trimmed) {
-      setAuthError('Please enter an Organization API Key');
-      return false;
-    }
-    setAuthError(null);
-    try {
-      const res = await api.loginWithApiKey(trimmed);
-      setStoredAuthToken(res.access_token);
-      setStoredApiKey(trimmed);
-      setToken(res.access_token);
-      setApiKey(trimmed);
-      setUser(res.user);
-      setActiveOrg(res.organization);
-      return true;
-    } catch (err: any) {
-      setAuthError(err.message || 'Invalid API Key');
-      return false;
-    }
+  const loginWithApiKey = async (_key: string): Promise<boolean> => {
+    setAuthError('API Key web login is disabled in production. Please sign in with your email and password.');
+    return false;
   };
 
   const switchTenant = (tenantId: string | null, org?: Organization | null) => {
@@ -146,9 +136,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
   }
 
-  const role = user?.role || (apiKey ? 'tenant_admin' : null);
+  const role = user?.role || null;
   const isSuperAdmin = role === 'super_admin';
-  const isAuthenticated = !!token || !!apiKey;
+  const isAuthenticated = Boolean(token && user);
 
   return (
     <AuthContext.Provider
@@ -157,7 +147,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         activeOrg,
         role,
         token,
-        apiKey,
+        apiKey: null,
         selectedTenantId,
         isAuthenticated,
         isSuperAdmin,

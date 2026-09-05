@@ -143,3 +143,167 @@ def test_superadmin_can_switch_tenant_context(db, client):
     items = resp_b_employees.json()["items"]
     assert len(items) == 1
     assert items[0]["full_name"] == "Bob Org B"
+
+
+def test_tenant_admin_can_change_password(db, client):
+    seed_default_organization(db)
+
+    # 1. Login as Tenant Admin
+    resp_login = client.post(
+        "/auth/login",
+        json={"email": "admin@acme.com", "password": "acme123"},
+    )
+    assert resp_login.status_code == 200
+    token = resp_login.json()["access_token"]
+
+    # 2. Change password successfully
+    resp_change = client.post(
+        "/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "current_password": "acme123",
+            "new_password": "new_secret_password_2026",
+            "confirm_password": "new_secret_password_2026",
+        },
+    )
+    assert resp_change.status_code == 200
+    assert resp_change.json()["success"] is True
+
+    # 3. Old password should now fail
+    resp_old_login = client.post(
+        "/auth/login",
+        json={"email": "admin@acme.com", "password": "acme123"},
+    )
+    assert resp_old_login.status_code == 401
+
+    # 4. New password should succeed
+    resp_new_login = client.post(
+        "/auth/login",
+        json={"email": "admin@acme.com", "password": "new_secret_password_2026"},
+    )
+    assert resp_new_login.status_code == 200
+
+
+def test_change_password_validations(db, client):
+    seed_default_organization(db)
+    resp_login = client.post(
+        "/auth/login",
+        json={"email": "admin@acme.com", "password": "acme123"},
+    )
+    token = resp_login.json()["access_token"]
+
+    # Wrong current password
+    resp_wrong_cur = client.post(
+        "/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "current_password": "wrong_current_password",
+            "new_password": "valid_new_password_123",
+            "confirm_password": "valid_new_password_123",
+        },
+    )
+    assert resp_wrong_cur.status_code == 400
+    assert "Current password does not match" in resp_wrong_cur.json()["detail"]
+
+    # Mismatched confirmation
+    resp_mismatch = client.post(
+        "/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "current_password": "acme123",
+            "new_password": "valid_new_password_123",
+            "confirm_password": "different_confirmation",
+        },
+    )
+    assert resp_mismatch.status_code == 400
+    assert "do not match" in resp_mismatch.json()["detail"]
+
+    # Too short (< 8 chars)
+    resp_short = client.post(
+        "/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "current_password": "acme123",
+            "new_password": "short",
+            "confirm_password": "short",
+        },
+    )
+    assert resp_short.status_code == 400
+    assert "at least 8 characters" in resp_short.json()["detail"]
+
+
+def test_superadmin_can_reset_tenant_password(db, client):
+    org = seed_default_organization(db)
+
+    # SuperAdmin login
+    resp_super = client.post(
+        "/auth/login",
+        json={"email": "admin@platform.local", "password": "admin123"},
+    )
+    super_token = resp_super.json()["access_token"]
+
+    # SuperAdmin resets password for Acme tenant admin
+    resp_reset = client.post(
+        f"/superadmin/organizations/{org.id}/reset-password",
+        headers={"Authorization": f"Bearer {super_token}"},
+        json={"new_password": "super_reset_password_999"},
+    )
+    assert resp_reset.status_code == 200
+    assert resp_reset.json()["success"] is True
+
+    # Tenant admin can now log in with the reset password
+    resp_tenant_login = client.post(
+        "/auth/login",
+        json={"email": "admin@acme.com", "password": "super_reset_password_999"},
+    )
+    assert resp_tenant_login.status_code == 200
+
+    # Tenant admin CANNOT call superadmin reset-password (403 Forbidden)
+    tenant_token = resp_tenant_login.json()["access_token"]
+    resp_forbidden = client.post(
+        f"/superadmin/organizations/{org.id}/reset-password",
+        headers={"Authorization": f"Bearer {tenant_token}"},
+        json={"new_password": "hack_attempt_password"},
+    )
+    assert resp_forbidden.status_code == 403
+
+
+def test_api_key_web_login_disabled(client):
+    """Verifies interactive web login via API key is disabled for production."""
+    resp = client.post("/auth/api-key", json={"api_key": "any-key-123"})
+    assert resp.status_code == 400
+    assert "disabled in production" in resp.json()["detail"]
+
+
+def test_login_rate_limiting(db, client):
+    """Verifies brute-force protection locks out after 5 consecutive failures."""
+    from app.routers.auth import clear_failed_login
+    seed_default_organization(db)
+
+    test_ip = "192.168.1.99"
+    test_email = "ratelimit_target@acme.com"
+    clear_failed_login(test_ip)
+    clear_failed_login(test_email)
+
+    # 5 consecutive failed attempts
+    for _ in range(5):
+        fail_resp = client.post(
+            "/auth/login",
+            headers={"x-forwarded-for": test_ip},
+            json={"email": test_email, "password": "wrong_password"},
+        )
+        assert fail_resp.status_code == 401
+
+    # 6th attempt should be blocked with 429 Too Many Requests
+    blocked_resp = client.post(
+        "/auth/login",
+        headers={"x-forwarded-for": test_ip},
+        json={"email": test_email, "password": "wrong_password"},
+    )
+    assert blocked_resp.status_code == 429
+    assert "Too many failed login attempts" in blocked_resp.json()["detail"]
+
+    # Clean up rate limit state for subsequent tests
+    clear_failed_login(test_ip)
+    clear_failed_login(test_email)
+    clear_failed_login("testclient")

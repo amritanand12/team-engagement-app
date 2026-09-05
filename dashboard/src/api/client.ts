@@ -322,4 +322,40 @@ export const api = {
       method: 'PATCH',
     });
   },
+
+  changePassword: async (currentPassword: string, newPassword: string, confirmPassword: string): Promise<any> => {
+    return apiFetch<any>('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+        confirm_password: confirmPassword,
+      }),
+    });
+  },
+
+  resetTenantPassword: async (orgId: string, newPassword: string): Promise<any> => {
+    return apiFetch<any>(`/superadmin/organizations/${orgId}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({
+        new_password: newPassword,
+      }),
+    });
+  },
+
+  deleteOrganization: async (orgId: string): Promise<any> => {
+    return apiFetch<any>(`/superadmin/organizations/${orgId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  getAuditLogs: async (params?: { limit?: number; offset?: number; action?: string; search?: string }): Promise<any> => {
+    const query = new URLSearchParams();
+    if (params?.limit) query.append('limit', params.limit.toString());
+    if (params?.offset !== undefined) query.append('offset', params.offset.toString());
+    if (params?.action) query.append('action', params.action);
+    if (params?.search) query.append('search', params.search);
+    const qs = query.toString();
+    return apiFetch<any>(`/superadmin/audit-logs${qs ? `?${qs}` : ''}`);
+  },
 };

@@ -164,9 +164,8 @@ def run_tenant_pipeline(
 ) -> PipelineResult:
     """Runs the full scan -> render -> send -> digest pipeline for a single tenant."""
     scan_date = scan_date or date.today()
-    mailer = mailer or get_mailer()
-
     org = db.get(Organization, organization_id)
+    mailer = mailer or get_mailer(org)
     leap_policy = org.leap_day_policy if org else settings.LEAP_DAY_POLICY
 
     detected, batch_id = scanner.run_scan(
@@ -228,9 +227,16 @@ def run_daily_pipeline(
 
     orgs = db.query(Organization).filter(Organization.is_active == True).all()
     if not orgs:
-        from app.seed import seed_default_organization
-        default_org = seed_default_organization(db)
-        orgs = [default_org]
+        logger.info("No active organizations found. Skipping daily pipeline.")
+        return PipelineResult(
+            batch_id=scan_date.isoformat(),
+            detected=0,
+            rendered=0,
+            sent=0,
+            failed=0,
+            skipped=0,
+            digest_status=DigestStatus.EMPTY_SKIPPED.value,
+        )
 
     last_result = None
     for org in orgs:

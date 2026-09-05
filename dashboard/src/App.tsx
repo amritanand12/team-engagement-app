@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
 import { Layout } from './components/layout/Layout';
@@ -13,9 +13,32 @@ import { SettingsPage } from './pages/SettingsPage';
 import { SuperAdminPage } from './pages/SuperAdminPage';
 
 const AppContent: React.FC = () => {
-  const { isAuthenticated, isSuperAdmin } = useAuth();
+  const { isAuthenticated, isSuperAdmin, user } = useAuth();
   const [activeTab, setActiveTab] = useState<NavTab>(() => (isSuperAdmin ? 'superadmin' : 'overview'));
   const [refreshKey, setRefreshKey] = useState(0);
+  const prevUserIdRef = useRef<string | null>(null);
+
+  // Automatically navigate SuperAdmin to 'superadmin' (Platform Hub)
+  // and Org Admin to 'overview' upon login or session restore
+  useEffect(() => {
+    if (user && user.id !== prevUserIdRef.current) {
+      prevUserIdRef.current = user.id;
+      if (isSuperAdmin) {
+        setActiveTab('superadmin');
+      } else {
+        setActiveTab('overview');
+      }
+    } else if (!user) {
+      prevUserIdRef.current = null;
+    }
+  }, [user, isSuperAdmin]);
+
+  // Strictly enforce role-based tab isolation
+  useEffect(() => {
+    if (!isSuperAdmin && activeTab === 'superadmin') {
+      setActiveTab('overview');
+    }
+  }, [isSuperAdmin, activeTab]);
 
   if (!isAuthenticated) {
     return <LoginPage />;
@@ -28,6 +51,15 @@ const AppContent: React.FC = () => {
   const renderActivePage = () => {
     switch (activeTab) {
       case 'superadmin':
+        if (!isSuperAdmin) {
+          return (
+            <OverviewPage
+              key={refreshKey}
+              onNavigateTab={(tab) => setActiveTab(tab)}
+              onOpenScanModal={() => {}}
+            />
+          );
+        }
         return (
           <SuperAdminPage
             key={refreshKey}
@@ -62,7 +94,13 @@ const AppContent: React.FC = () => {
   return (
     <Layout
       activeTab={activeTab}
-      onSelectTab={(tab) => setActiveTab(tab)}
+      onSelectTab={(tab) => {
+        if (tab === 'superadmin' && !isSuperAdmin) {
+          setActiveTab('overview');
+        } else {
+          setActiveTab(tab);
+        }
+      }}
       onRefreshData={handleRefreshAll}
     >
       {renderActivePage()}

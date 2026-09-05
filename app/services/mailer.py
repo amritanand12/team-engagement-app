@@ -29,19 +29,39 @@ class BaseMailer(ABC):
 
 
 class SMTPMailer(BaseMailer):
+    def __init__(
+        self,
+        host: str | None = None,
+        port: int | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        from_address: str | None = None,
+    ):
+        self.host = host or settings.SMTP_HOST
+        self.port = port or settings.SMTP_PORT
+        self.username = username or settings.SMTP_USERNAME
+        self.password = password or settings.SMTP_PASSWORD
+        self.from_address = from_address or settings.SMTP_FROM_ADDRESS
+
     def send(self, to: str, subject: str, html: str) -> None:
+        if self.host in ("smtp.example.com", "example.com", ""):
+            raise MailSendError(
+                f"SMTP host is set to placeholder '{self.host}'. "
+                f"Set MAIL_PROVIDER=mock in .env for local testing, or configure a valid SMTP server."
+            )
+
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"] = settings.SMTP_FROM_ADDRESS
+        msg["From"] = self.from_address
         msg["To"] = to
         msg.attach(MIMEText(html, "html"))
 
         try:
-            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15) as server:
+            with smtplib.SMTP(self.host, self.port, timeout=15) as server:
                 server.starttls()
-                if settings.SMTP_USERNAME:
-                    server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
-                server.sendmail(settings.SMTP_FROM_ADDRESS, [to], msg.as_string())
+                if self.username:
+                    server.login(self.username, self.password)
+                server.sendmail(self.from_address, [to], msg.as_string())
         except (smtplib.SMTPException, OSError) as exc:
             raise MailSendError(str(exc)) from exc
 
@@ -61,9 +81,17 @@ class MockMailer(BaseMailer):
         self.sent.append({"to": to, "subject": subject, "html": html})
 
 
-def get_mailer() -> BaseMailer:
+def get_mailer(org: object | None = None) -> BaseMailer:
     if settings.MAIL_PROVIDER == "mock" or settings.TESTING:
         return MockMailer()
+    if org and getattr(org, "smtp_host", None):
+        return SMTPMailer(
+            host=getattr(org, "smtp_host", None),
+            port=getattr(org, "smtp_port", None),
+            username=getattr(org, "smtp_username", None),
+            password=getattr(org, "smtp_password", None),
+            from_address=getattr(org, "smtp_from_address", None),
+        )
     return SMTPMailer()
 
 

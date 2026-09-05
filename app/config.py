@@ -6,14 +6,23 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
+from dotenv import load_dotenv
 
+# config.py is inside app/
+BASE_DIR = Path(__file__).resolve().parent.parent
+ENV_FILE = BASE_DIR / ".env"
 
+load_dotenv(ENV_FILE)
 class Settings:
     # --- Database ---
     DATABASE_URL: str = os.getenv(
-        "DATABASE_URL", "postgresql+psycopg2://engagement:engagement@localhost:5432/engagement"
+        "DATABASE_URL", "postgresql+psycopg2://postgres:newpassword@localhost:5432/engagement"
     )
+    AUTO_FALLBACK_SQLITE: bool = os.getenv("AUTO_FALLBACK_SQLITE", "true").lower() == "true"
+    SQLITE_FALLBACK_URL: str = os.getenv("SQLITE_FALLBACK_URL", "sqlite:///./engagement.db")
+    DB_CONNECT_TIMEOUT_SECONDS: int = int(os.getenv("DB_CONNECT_TIMEOUT_SECONDS", "2"))
 
     # --- Redis (used for send-queue + distributed lock on the daily scan) ---
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -54,8 +63,9 @@ class Settings:
     MAIL_MAX_RETRIES: int = int(os.getenv("MAIL_MAX_RETRIES", "3"))
     MAIL_RETRY_BACKOFF_SECONDS: float = float(os.getenv("MAIL_RETRY_BACKOFF_SECONDS", "2.0"))
 
-    # --- Admin API ---
+    # --- Admin API & Security ---
     ADMIN_API_KEY: str = os.getenv("ADMIN_API_KEY", "change-me-in-production")
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "")
 
     # --- HRMS sync ---
     HRMS_API_BASE_URL: str = os.getenv("HRMS_API_BASE_URL", "https://hrms.example.com/api")

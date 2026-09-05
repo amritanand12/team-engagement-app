@@ -70,10 +70,15 @@ def seed_default_templates(db: Session, organization_id: str) -> int:
     return created
 
 
-def seed_default_users(db: Session, default_org_id: str) -> None:
-    """Seeds the default platform SuperAdmin and default Tenant Admin if they do not exist."""
-    # 1. SuperAdmin
-    superadmin = db.query(User).filter(User.email == "admin@platform.local").first()
+def seed_superadmin(db: Session) -> User:
+    """
+    Seeds the platform SuperAdmin account if one does not already exist.
+    Guarantees no client organizations, demo sandboxes, or fake users are created.
+    """
+    superadmin = db.query(User).filter(User.role == UserRole.SUPER_ADMIN).first()
+    if not superadmin:
+        superadmin = db.query(User).filter(User.email == "admin@platform.local").first()
+
     if not superadmin:
         superadmin = User(
             email="admin@platform.local",
@@ -84,8 +89,17 @@ def seed_default_users(db: Session, default_org_id: str) -> None:
             is_active=True,
         )
         db.add(superadmin)
+        db.commit()
+        db.refresh(superadmin)
 
-    # 2. Default Tenant Admin
+    return superadmin
+
+
+def seed_default_users(db: Session, default_org_id: str) -> None:
+    """Seeds the default platform SuperAdmin and default Tenant Admin if they do not exist."""
+    seed_superadmin(db)
+
+    # Tenant Admin for the specified org
     tenant_admin = db.query(User).filter(User.email == "admin@acme.com").first()
     if not tenant_admin:
         tenant_admin = User(
@@ -103,8 +117,8 @@ def seed_default_users(db: Session, default_org_id: str) -> None:
 
 def seed_default_organization(db: Session) -> Organization:
     """
-    Ensures a primary organization exists matching ADMIN_API_KEY.
-    If no organization exists, creates the default one and seeds templates.
+    Ensures a primary organization exists matching ADMIN_API_KEY (used by test fixtures).
+    Sets is_demo=False so it is treated as a clean standard client organization.
     """
     org = db.query(Organization).filter(Organization.api_key == settings.ADMIN_API_KEY).first()
     if not org:
@@ -120,7 +134,7 @@ def seed_default_organization(db: Session) -> Organization:
             leap_day_policy=settings.LEAP_DAY_POLICY,
             digest_channel_id=settings.DEFAULT_DIGEST_CHANNEL_ID,
             is_active=True,
-            is_demo=True,
+            is_demo=False,
         )
         db.add(org)
         db.commit()

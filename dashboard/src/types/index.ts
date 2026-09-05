@@ -262,4 +262,20 @@ export interface CreateTenantPayload {
   leap_day_policy?: string;
 }
 
+export interface ChangePasswordPayload {
+  current_password: str;
+  new_password: str;
+  confirm_password: str;
+}
+
+export interface ResetPasswordPayload {
+  new_password: str;
+}
+
+export interface ChangePasswordResponse {
+  success: boolean;
+  message: string;
+}
+
+export type str = string;
 export type int = number;

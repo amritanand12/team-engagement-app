@@ -16,7 +16,7 @@ from typing import Any
 from app.config import get_settings
 
 settings = get_settings()
-SECRET_KEY = settings.ADMIN_API_KEY.encode("utf-8")
+SECRET_KEY = (settings.JWT_SECRET_KEY or settings.ADMIN_API_KEY).encode("utf-8")
 TOKEN_EXPIRY_SECONDS = 7 * 24 * 3600  # 7 days
 
 

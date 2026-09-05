@@ -2,13 +2,22 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import DigestLog, EmployeeProfile, EventLog, EventStatus, EventTemplate, EventType, Organization
+from app.models import (
+    DigestLog,
+    EmployeeProfile,
+    EventLog,
+    EventStatus,
+    EventTemplate,
+    EventType,
+    Organization,
+    User,
+)
 from app.schemas import (
     CsvImportResponse,
     CsvImportRowError,
@@ -33,6 +42,7 @@ from app.schemas import (
     TodayStats,
     UpcomingEventItem,
 )
+from app.services.audit import record_audit_log
 from app.services.csv_importer import import_employees_from_csv
 from app.services.demo import reset_demo_organization
 from app.services.hrms_sync import sync_employees
@@ -45,18 +55,17 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 settings = get_settings()
 
 
-def get_current_org(
+def get_current_user_and_org_context(
     authorization: str | None = Header(default=None),
     x_api_key: str | None = Header(default=None),
     x_tenant_id: str | None = Header(default=None),
     db: Session = Depends(get_db),
-) -> Organization:
+) -> tuple[User, Organization]:
     """
-    Resolves the tenant Organization via JWT Bearer Token or API Key.
-    Supports SuperAdmin tenant switching via x-tenant-id header.
+    Resolves both the User and Organization via JWT Bearer Token or API Key.
     """
     from app.routers.auth import get_current_user_and_org
-    _, org = get_current_user_and_org(
+    user, org = get_current_user_and_org(
         authorization=authorization,
         x_api_key=x_api_key,
         x_tenant_id=x_tenant_id,
@@ -64,6 +73,16 @@ def get_current_org(
     )
     if not org:
         raise HTTPException(status_code=400, detail="No active organization selected")
+    return user, org
+
+
+def get_current_org(
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+) -> Organization:
+    """
+    Resolves the tenant Organization.
+    """
+    _, org = user_and_org
     return org
 
 
@@ -82,12 +101,26 @@ def get_organization_profile(
 @router.patch("/organization", response_model=OrganizationOut)
 def update_organization_profile(
     payload: OrganizationUpdateIn,
-    org: Organization = Depends(get_current_org),
+    request: Request,
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
 ):
+    user, org = user_and_org
     data = payload.model_dump(exclude_unset=True)
     for k, v in data.items():
         setattr(org, k, v)
+    record_audit_log(
+        db,
+        action="SETTINGS_UPDATED",
+        actor_email=user.email,
+        actor_role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        actor_id=user.id,
+        organization_id=org.id,
+        resource_type="organization",
+        resource_id=org.id,
+        details=f"Updated settings: {', '.join(data.keys())}",
+        ip_address=request.client.host if request.client else None,
+    )
     db.commit()
     db.refresh(org)
     return org
@@ -100,11 +133,26 @@ def update_organization_profile(
 
 @router.post("/demo/reset", response_model=DemoResetResponse)
 def reset_demo(
-    org: Organization = Depends(get_current_org),
+    request: Request,
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
 ):
     """Resets the demo organization with realistic mock employees & fresh scans."""
+    user, org = user_and_org
     emp_count, events_detected = reset_demo_organization(db, org.id)
+    record_audit_log(
+        db,
+        action="DEMO_RESET",
+        actor_email=user.email,
+        actor_role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        actor_id=user.id,
+        organization_id=org.id,
+        resource_type="organization",
+        resource_id=org.id,
+        details=f"Reset demo data ({emp_count} employees, {events_detected} events)",
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
     return DemoResetResponse(
         success=True,
         message="Demo organization successfully reset with fresh sample data",
@@ -120,14 +168,28 @@ def reset_demo(
 
 @router.post("/scan/trigger", response_model=ScanTriggerResponse)
 def trigger_scan(
+    request: Request,
     scan_date: date | None = Query(default=None, description="Defaults to today"),
-    org: Organization = Depends(get_current_org),
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
 ):
     """
     Manually runs the full pipeline (scan -> render -> send -> digest) for the current organization.
     """
+    user, org = user_and_org
     result = run_tenant_pipeline(db, org.id, scan_date=scan_date)
+    record_audit_log(
+        db,
+        action="SCAN_TRIGGERED",
+        actor_email=user.email,
+        actor_role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        actor_id=user.id,
+        organization_id=org.id,
+        resource_type="pipeline",
+        details=f"Scan triggered for date {scan_date or 'today'}: detected {result.detected}, sent {result.sent}, failed {result.failed}",
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
     return ScanTriggerResponse(**result.__dict__)
 
 
@@ -176,9 +238,11 @@ def get_event(
 @router.post("/events/{event_id}/resend", response_model=ResendResponse)
 def resend_event(
     event_id: str,
-    org: Organization = Depends(get_current_org),
+    request: Request,
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
 ):
+    user, org = user_and_org
     event = db.query(EventLog).filter(EventLog.id == event_id, EventLog.organization_id == org.id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
@@ -199,7 +263,7 @@ def resend_event(
         db.commit()
         return ResendResponse(event_id=event.id, status=event.status, message=event.error_detail)
 
-    mailer = get_mailer()
+    mailer = get_mailer(org)
     event.attempt_count += 1
     success, error = send_with_retry(mailer, employee.email, event.rendered_subject, event.rendered_html)
     if success:
@@ -212,6 +276,18 @@ def resend_event(
         event.error_detail = error
         msg = error or "Send failed"
 
+    record_audit_log(
+        db,
+        action="EVENT_RESENT",
+        actor_email=user.email,
+        actor_role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        actor_id=user.id,
+        organization_id=org.id,
+        resource_type="event",
+        resource_id=event.id,
+        details=f"Event resend attempt ({event.event_type.value if hasattr(event.event_type, 'value') else event.event_type}): {msg}",
+        ip_address=request.client.host if request.client else None,
+    )
     db.commit()
     return ResendResponse(event_id=event.id, status=event.status, message=msg)
 
@@ -294,9 +370,11 @@ def get_employee(
 @router.post("/employees", response_model=EmployeeOut, status_code=201)
 def create_employee(
     payload: EmployeeCreateIn,
-    org: Organization = Depends(get_current_org),
+    request: Request,
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
 ):
+    user, org = user_and_org
     existing = db.query(EmployeeProfile).filter(
         EmployeeProfile.organization_id == org.id,
         EmployeeProfile.employee_code == payload.employee_code,
@@ -308,6 +386,18 @@ def create_employee(
     emp_data["organization_id"] = org.id
     emp = EmployeeProfile(**emp_data)
     db.add(emp)
+    record_audit_log(
+        db,
+        action="EMPLOYEE_CREATED",
+        actor_email=user.email,
+        actor_role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        actor_id=user.id,
+        organization_id=org.id,
+        resource_type="employee",
+        resource_id=emp.id,
+        details=f"Created employee {emp.full_name} ({emp.employee_code})",
+        ip_address=request.client.host if request.client else None,
+    )
     db.commit()
     db.refresh(emp)
     return emp
@@ -317,9 +407,11 @@ def create_employee(
 def update_employee(
     employee_id: str,
     payload: EmployeeUpdateIn,
-    org: Organization = Depends(get_current_org),
+    request: Request,
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
 ):
+    user, org = user_and_org
     emp = db.query(EmployeeProfile).filter(
         EmployeeProfile.id == employee_id,
         EmployeeProfile.organization_id == org.id,
@@ -339,6 +431,18 @@ def update_employee(
     for k, v in data.items():
         setattr(emp, k, v)
 
+    record_audit_log(
+        db,
+        action="EMPLOYEE_UPDATED",
+        actor_email=user.email,
+        actor_role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        actor_id=user.id,
+        organization_id=org.id,
+        resource_type="employee",
+        resource_id=emp.id,
+        details=f"Updated employee {emp.full_name} ({', '.join(data.keys())})",
+        ip_address=request.client.host if request.client else None,
+    )
     db.commit()
     db.refresh(emp)
     return emp
@@ -346,13 +450,27 @@ def update_employee(
 
 @router.post("/employees/upload-csv", response_model=CsvImportResponse)
 async def upload_employees_csv(
+    request: Request,
     file: UploadFile = File(...),
-    org: Organization = Depends(get_current_org),
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
 ):
     """Bulk imports/updates employees via CSV with automatic field mapping."""
+    user, org = user_and_org
     content = await file.read()
     imported, updated, failed, raw_errors = import_employees_from_csv(db, org.id, content)
+
+    record_audit_log(
+        db,
+        action="CSV_IMPORTED",
+        actor_email=user.email,
+        actor_role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        actor_id=user.id,
+        organization_id=org.id,
+        resource_type="employee",
+        details=f"CSV import completed: {imported} imported, {updated} updated, {failed} failed",
+        ip_address=request.client.host if request.client else None,
+    )
     db.commit()
 
     errors = [CsvImportRowError(row=e["row"], error=e["error"]) for e in raw_errors]
@@ -387,9 +505,11 @@ def list_templates(
 def update_template(
     template_id: str,
     payload: TemplateUpdateIn,
-    org: Organization = Depends(get_current_org),
+    request: Request,
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
 ):
+    user, org = user_and_org
     template = db.query(EventTemplate).filter(
         EventTemplate.id == template_id,
         EventTemplate.organization_id == org.id,
@@ -402,6 +522,18 @@ def update_template(
         if v is not None:
             setattr(template, k, v)
 
+    record_audit_log(
+        db,
+        action="TEMPLATE_UPDATED",
+        actor_email=user.email,
+        actor_role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        actor_id=user.id,
+        organization_id=org.id,
+        resource_type="template",
+        resource_id=template.id,
+        details=f"Updated template {template.id} ({template.event_type.value if hasattr(template.event_type, 'value') else template.event_type}/{template.variant_key})",
+        ip_address=request.client.host if request.client else None,
+    )
     db.commit()
     db.refresh(template)
     return template
