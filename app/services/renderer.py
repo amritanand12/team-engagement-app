@@ -89,9 +89,11 @@ def build_context(
     org_name = company_name or (employee.organization.name if employee.organization else None) or settings.COMPANY_NAME
     org_logo = company_logo_url or (employee.organization.company_logo_url if employee.organization else None) or settings.COMPANY_LOGO_URL
 
+    has_custom = bool(getattr(employee, "has_custom_photo", False) and employee.photo_url)
     return {
         "name": employee.preferred_name or employee.full_name,
-        "photo_url": employee.photo_url or settings.DEFAULT_AVATAR_URL,
+        "photo_url": employee.photo_url if (employee.photo_url and has_custom) else (employee.photo_url or settings.DEFAULT_AVATAR_URL),
+        "has_custom_photo": has_custom,
         "department": employee.department,
         "years": years,
         "company_name": org_name,
@@ -241,6 +243,7 @@ def render_event(db: Session, event: EventLog) -> EventLog:
         event.rendered_subject = subject_tpl.render(**context)
         event.rendered_html = body_tpl.render(**context)
         event.template_id = template.id
+        event.used_custom_photo = context.get("has_custom_photo", False)
         event.status = EventStatus.RENDERED
         event.error_detail = None
     except (RenderError, TemplateError) as exc:

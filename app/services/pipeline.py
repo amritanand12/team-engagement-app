@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date
+import os
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
@@ -77,7 +79,27 @@ def _send_individual_emails(
             continue
 
         event.attempt_count += 1
-        success, error = send_with_retry(mailer, employee.email, event.rendered_subject, event.rendered_html)
+        attachment_path = None
+        html_to_send = event.rendered_html or ""
+        if event.used_custom_photo and employee.photo_url:
+            clean_rel = employee.photo_url.lstrip("/").replace("/", os.sep)
+            if os.path.isfile(clean_rel):
+                attachment_path = clean_rel
+            elif os.path.isfile(employee.photo_url):
+                attachment_path = employee.photo_url
+
+            if attachment_path:
+                # Replace local URL with cid:celebration_photo so email clients display it directly in the card
+                html_to_send = html_to_send.replace(employee.photo_url, "cid:celebration_photo")
+                html_to_send = html_to_send.replace(f"/{employee.photo_url.lstrip('/')}", "cid:celebration_photo")
+
+        success, error = send_with_retry(
+            mailer,
+            employee.email,
+            event.rendered_subject,
+            html_to_send,
+            attachment_path=attachment_path,
+        )
         if success:
             event.status = EventStatus.SENT
             from datetime import datetime

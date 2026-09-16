@@ -3,7 +3,10 @@ from __future__ import annotations
 import time
 import urllib.parse
 from datetime import date, datetime, timedelta
+from pathlib import Path
+import shutil
 from typing import Iterator
+import uuid
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
 from sqlalchemy import create_engine, func, or_, text
@@ -38,6 +41,7 @@ from app.schemas import (
     OrganizationUpdateIn,
     PaginatedDigestsOut,
     PaginatedEmployeesOut,
+    PhotoRequestResponse,
     ResendResponse,
     ScanTriggerResponse,
     StatsSummaryResponse,
@@ -58,6 +62,7 @@ from app.services.csv_importer import import_employees_from_csv
 from app.services.demo import reset_demo_organization
 from app.services.hrms_sync import sync_employees
 from app.services.mailer import SMTPMailer, get_mailer, send_with_retry
+from app.services.photo_requester import scan_and_send_advance_photo_requests, send_single_photo_request
 from app.services.pipeline import run_tenant_pipeline
 from app.services.renderer import preview_template_render, render_event
 from app.services.scanner import find_due_events
@@ -521,7 +526,25 @@ def resend_event(
 
     mailer = get_mailer(org)
     event.attempt_count += 1
-    success, error = send_with_retry(mailer, employee.email, event.rendered_subject, event.rendered_html)
+    attachment_path = None
+    html_to_send = event.rendered_html or ""
+    if getattr(event, "used_custom_photo", False) and employee.photo_url:
+        clean_rel = employee.photo_url.lstrip("/").replace("/", os.sep)
+        if os.path.isfile(clean_rel):
+            attachment_path = clean_rel
+        elif os.path.isfile(employee.photo_url):
+            attachment_path = employee.photo_url
+        if attachment_path:
+            html_to_send = html_to_send.replace(employee.photo_url, "cid:celebration_photo")
+            html_to_send = html_to_send.replace(f"/{employee.photo_url.lstrip('/')}", "cid:celebration_photo")
+
+    success, error = send_with_retry(
+        mailer,
+        employee.email,
+        event.rendered_subject,
+        html_to_send,
+        attachment_path=attachment_path,
+    )
     if success:
         event.status = EventStatus.SENT
         event.sent_at = datetime.utcnow()
@@ -750,6 +773,121 @@ def update_employee(
     tenant_db.refresh(emp)
     db.commit()
     return emp
+
+
+@router.post("/employees/{employee_id}/request-photo", response_model=PhotoRequestResponse)
+def request_employee_photo(
+    employee_id: str,
+    request: Request,
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
+):
+    """
+    Sends an email to the employee requesting a photo of their choice for their upcoming celebration.
+    """
+    user, org = user_and_org
+    success, message = send_single_photo_request(tenant_db, employee_id, org.id, force=True)
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+
+    record_audit_log(
+        db,
+        action="PHOTO_REQUEST_SENT",
+        actor_email=user.email,
+        actor_role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        actor_id=user.id,
+        organization_id=org.id,
+        resource_type="employee",
+        resource_id=employee_id,
+        details=f"Triggered celebration photo request email: {message}",
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    return PhotoRequestResponse(success=True, message=message)
+
+
+@router.post("/employees/{employee_id}/upload-photo", response_model=EmployeeOut)
+async def upload_employee_photo_admin(
+    employee_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
+):
+    """
+    Directly uploads or updates an employee photo from the admin dashboard.
+    """
+    user, org = user_and_org
+    emp = tenant_db.query(EmployeeProfile).filter(
+        EmployeeProfile.id == employee_id,
+        EmployeeProfile.organization_id == org.id,
+    ).first()
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+        raise HTTPException(status_code=400, detail=f"Invalid image format '{ext}'. Allowed: JPG, PNG, WEBP, GIF")
+
+    upload_dir = Path("uploads/photos")
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    file_id = uuid.uuid4().hex[:12]
+    safe_filename = f"{emp.id}_{file_id}{ext}"
+    dest_path = upload_dir / safe_filename
+
+    with dest_path.open("wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    emp.photo_url = f"/uploads/photos/{safe_filename}"
+    emp.has_custom_photo = True
+    tenant_db.commit()
+    tenant_db.refresh(emp)
+
+    record_audit_log(
+        db,
+        action="EMPLOYEE_PHOTO_UPLOADED",
+        actor_email=user.email,
+        actor_role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        actor_id=user.id,
+        organization_id=org.id,
+        resource_type="employee",
+        resource_id=emp.id,
+        details=f"Admin uploaded photo for {emp.full_name}: {emp.photo_url}",
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    return emp
+
+
+@router.post("/photo-requests/scan", response_model=list[dict])
+def trigger_advance_photo_requests_scan(
+    request: Request,
+    scan_date: date | None = Query(default=None, description="Defaults to today"),
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    db: Session = Depends(get_db),
+    tenant_db: Session = Depends(get_tenant_db),
+):
+    """
+    Triggers the advance photo request scan for upcoming celebrations in this organization.
+    """
+    user, org = user_and_org
+    results = scan_and_send_advance_photo_requests(tenant_db, organization_id=org.id, scan_date=scan_date)
+
+    record_audit_log(
+        db,
+        action="PHOTO_REQUEST_SCAN_TRIGGERED",
+        actor_email=user.email,
+        actor_role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        actor_id=user.id,
+        organization_id=org.id,
+        resource_type="photo_requester",
+        details=f"Photo request scan completed. Dispatched {len(results)} requests.",
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    return results
 
 
 @router.post("/employees/upload-csv", response_model=CsvImportResponse)

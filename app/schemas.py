@@ -28,6 +28,9 @@ class EmployeeOut(BaseModel):
     is_active: bool = True
     birthday_template_id: str | None = None
     anniversary_template_id: str | None = None
+    has_custom_photo: bool = False
+    photo_request_sent_at: datetime | None = None
+    photo_upload_token: str | None = None
     last_synced_at: datetime | None = None
 
 
@@ -76,6 +79,7 @@ class EmployeeUpdateIn(BaseModel):
     team_channel_id: str | None = None
     birthday_template_id: str | None = None
     anniversary_template_id: str | None = None
+    has_custom_photo: bool | None = None
     is_active: bool | None = None
 
     @field_validator("email")
@@ -119,6 +123,7 @@ class EventLogOut(BaseModel):
     error_detail: str | None = None
     rendered_subject: str | None = None
     rendered_html: str | None = None
+    used_custom_photo: bool = False
     sent_at: datetime | None = None
     created_at: datetime
     employee_name: str | None = None
@@ -280,6 +285,9 @@ class OrganizationOut(BaseModel):
     cached_event_count: int = 0
     slack_webhook_url: str | None = None
     teams_webhook_url: str | None = None
+    photo_request_enabled: bool = True
+    photo_request_days_ahead: int = 7
+    google_form_url: str | None = None
     is_active: bool
     is_demo: bool
     created_at: datetime
@@ -305,6 +313,14 @@ class OrganizationUpdateIn(BaseModel):
     smtp_use_tls: bool | None = None
     slack_webhook_url: str | None = None
     teams_webhook_url: str | None = None
+    photo_request_enabled: bool | None = None
+    photo_request_days_ahead: int | None = None
+    google_form_url: str | None = None
+
+
+class PhotoRequestResponse(BaseModel):
+    success: bool
+    message: str
 
 
 class TestDbConnectionIn(BaseModel):

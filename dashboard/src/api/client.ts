@@ -21,6 +21,8 @@ import {
   TestDbConnectionResponse,
   TestSmtpConnectionPayload,
   TestSmtpConnectionResponse,
+  PhotoRequestResponse,
+  PublicPhotoInfo,
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
@@ -210,6 +212,68 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload),
     });
+  },
+
+  requestEmployeePhoto: async (employeeId: string): Promise<PhotoRequestResponse> => {
+    return apiFetch<PhotoRequestResponse>(`/admin/employees/${employeeId}/request-photo`, {
+      method: 'POST',
+    });
+  },
+
+  uploadEmployeePhoto: async (employeeId: string, file: File): Promise<Employee> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const token = getStoredAuthToken();
+    const apiKey = getStoredApiKey();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (apiKey) headers['x-api-key'] = apiKey;
+
+    const response = await fetch(`${API_BASE}/admin/employees/${employeeId}/upload-photo`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    if (!response.ok) {
+      let errDetail = 'Photo upload failed';
+      try {
+        const d = await response.json();
+        if (d?.detail) errDetail = typeof d.detail === 'string' ? d.detail : JSON.stringify(d.detail);
+      } catch {}
+      throw new ApiError(errDetail, response.status);
+    }
+    return await response.json();
+  },
+
+  scanPhotoRequests: async (scanDate?: string): Promise<any[]> => {
+    const params = scanDate ? `?scan_date=${encodeURIComponent(scanDate)}` : '';
+    return apiFetch<any[]>(`/admin/photo-requests/scan${params}`, {
+      method: 'POST',
+    });
+  },
+
+  getPublicPhotoInfo: async (token: string): Promise<PublicPhotoInfo> => {
+    const res = await fetch(`${API_BASE}/api/public/photo-info?token=${encodeURIComponent(token)}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to load photo request info');
+    }
+    return res.json();
+  },
+
+  uploadPublicPhoto: async (token: string, file: File): Promise<any> => {
+    const formData = new FormData();
+    formData.append('token', token);
+    formData.append('file', file);
+    const res = await fetch(`${API_BASE}/api/public/upload-photo`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to upload photo');
+    }
+    return res.json();
   },
 
   getTemplates: async (): Promise<EventTemplate[]> => {

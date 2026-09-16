@@ -19,6 +19,9 @@ export interface Employee {
   is_active: boolean;
   birthday_template_id: string | null;
   anniversary_template_id: string | null;
+  has_custom_photo?: boolean;
+  photo_request_sent_at?: string | null;
+  photo_upload_token?: string | null;
   last_synced_at: string | null;
 }
 
@@ -51,6 +54,7 @@ export interface EmployeeUpdatePayload {
   team_channel_id?: string | null;
   birthday_template_id?: string | null;
   anniversary_template_id?: string | null;
+  has_custom_photo?: boolean;
   is_active?: boolean;
 }
 
@@ -74,6 +78,7 @@ export interface EventLog {
   error_detail: string | null;
   rendered_subject: string | null;
   rendered_html: string | null;
+  used_custom_photo?: boolean;
   sent_at: string | null;
   created_at: string;
   employee_name?: string | null;
@@ -221,6 +226,9 @@ export interface Organization {
   cached_event_count: number;
   slack_webhook_url: string | null;
   teams_webhook_url: string | null;
+  photo_request_enabled?: boolean;
+  photo_request_days_ahead?: number;
+  google_form_url?: string | null;
   is_active: boolean;
   is_demo: boolean;
   created_at: string;
@@ -246,6 +254,9 @@ export interface OrganizationUpdatePayload {
   smtp_use_tls?: boolean;
   slack_webhook_url?: string | null;
   teams_webhook_url?: string | null;
+  photo_request_enabled?: boolean;
+  photo_request_days_ahead?: number;
+  google_form_url?: string | null;
 }
 
 export interface TestDbConnectionPayload {
@@ -355,6 +366,21 @@ export interface ResetPasswordPayload {
 export interface ChangePasswordResponse {
   success: boolean;
   message: string;
+}
+
+export interface PhotoRequestResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface PublicPhotoInfo {
+  employee_name: string;
+  preferred_name: string | null;
+  company_name: string;
+  company_logo_url: string | null;
+  current_photo_url: string | null;
+  has_custom_photo: boolean;
+  expires_at?: string | null;
 }
 
 export type str = string;

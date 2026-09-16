@@ -22,6 +22,9 @@ import {
   AlertCircle,
   X,
   UploadCloud,
+  Camera,
+  Sparkles,
+  Upload,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -118,6 +121,50 @@ export const EmployeesPage: React.FC<EmployeesPageProps> = ({ onNavigateTab }) =
       toast.error('Failed to load employee details', err.message);
     } finally {
       setDrawerLoading(false);
+    }
+  };
+
+  const [requestingPhotoId, setRequestingPhotoId] = useState<string | null>(null);
+  const [uploadingPhotoId, setUploadingPhotoId] = useState<string | null>(null);
+  const drawerPhotoInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleRequestPhoto = async (emp: Employee, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setRequestingPhotoId(emp.id);
+    try {
+      const res = await api.requestEmployeePhoto(emp.id);
+      toast.success('Photo Request Sent', res.message);
+      fetchEmployees();
+      if (selectedEmployee && selectedEmployee.id === emp.id) {
+        setSelectedEmployee({
+          ...selectedEmployee,
+          photo_request_sent_at: new Date().toISOString(),
+        });
+      }
+    } catch (err: any) {
+      toast.error('Failed to Send Request', err.message);
+    } finally {
+      setRequestingPhotoId(null);
+    }
+  };
+
+  const handleDirectPhotoUpload = async (emp: Employee, file: File) => {
+    setUploadingPhotoId(emp.id);
+    try {
+      const updated = await api.uploadEmployeePhoto(emp.id, file);
+      toast.success('Photo Uploaded', `Custom celebration photo saved for ${emp.full_name}!`);
+      fetchEmployees();
+      if (selectedEmployee && selectedEmployee.id === emp.id) {
+        setSelectedEmployee({
+          ...selectedEmployee,
+          photo_url: updated.photo_url,
+          has_custom_photo: true,
+        });
+      }
+    } catch (err: any) {
+      toast.error('Photo Upload Failed', err.message);
+    } finally {
+      setUploadingPhotoId(null);
     }
   };
 
@@ -439,6 +486,18 @@ export const EmployeesPage: React.FC<EmployeesPageProps> = ({ onNavigateTab }) =
                               <Mail className="w-3 h-3 text-slate-400" />
                               <span>{emp.email}</span>
                             </div>
+                            <div className="pt-0.5">
+                              {emp.has_custom_photo ? (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                                  <Camera className="w-2.5 h-2.5" />
+                                  Custom Photo
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
+                                  Default Avatar
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </td>
@@ -473,14 +532,25 @@ export const EmployeesPage: React.FC<EmployeesPageProps> = ({ onNavigateTab }) =
 
                       {/* Actions */}
                       <td className="px-4 py-3.5 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          type="button"
-                          onClick={(e) => openEditModal(emp, e)}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
-                          title="Edit Profile"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={(e) => handleRequestPhoto(emp, e)}
+                            disabled={requestingPhotoId === emp.id}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                            title="Send Celebration Photo Request Email"
+                          >
+                            <Camera className={`w-3.5 h-3.5 ${requestingPhotoId === emp.id ? 'animate-spin' : ''}`} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => openEditModal(emp, e)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                            title="Edit Profile"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -548,6 +618,72 @@ export const EmployeesPage: React.FC<EmployeesPageProps> = ({ onNavigateTab }) =
                 <Edit2 className="w-3.5 h-3.5" />
                 <span>Edit</span>
               </button>
+            </div>
+
+            {/* Celebration Photo & Request Card */}
+            <div className="p-4 rounded-2xl bg-white border border-slate-200 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Camera className="w-4 h-4 text-rose-500" />
+                  <h5 className="text-xs font-bold text-slate-800">Celebration Photo Status</h5>
+                </div>
+                {selectedEmployee.has_custom_photo ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
+                    <Sparkles className="w-3 h-3 text-rose-500" />
+                    Custom Chosen Photo
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[11px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                    Default Company Avatar
+                  </span>
+                )}
+              </div>
+
+              <p className="text-xs text-slate-500 leading-relaxed">
+                {selectedEmployee.has_custom_photo
+                  ? 'This employee has submitted a personal photo. It will be featured in celebratory emails and team digests.'
+                  : 'No custom photo submitted yet. Celebrations will use the standard default template.'}
+              </p>
+
+              {selectedEmployee.photo_request_sent_at && (
+                <p className="text-[11px] text-slate-400">
+                  Last photo request email sent: {new Date(selectedEmployee.photo_request_sent_at).toLocaleDateString()}
+                </p>
+              )}
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => handleRequestPhoto(selectedEmployee)}
+                  disabled={requestingPhotoId === selectedEmployee.id}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  <Mail className={`w-3.5 h-3.5 ${requestingPhotoId === selectedEmployee.id ? 'animate-spin' : ''}`} />
+                  <span>{requestingPhotoId === selectedEmployee.id ? 'Sending Request...' : 'Send Photo Request Email'}</span>
+                </button>
+
+                <input
+                  ref={drawerPhotoInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      handleDirectPhotoUpload(selectedEmployee, e.target.files[0]);
+                    }
+                  }}
+                  className="hidden"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => drawerPhotoInputRef.current?.click()}
+                  disabled={uploadingPhotoId === selectedEmployee.id}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  <Upload className={`w-3.5 h-3.5 ${uploadingPhotoId === selectedEmployee.id ? 'animate-spin' : ''}`} />
+                  <span>{uploadingPhotoId === selectedEmployee.id ? 'Uploading...' : 'Upload Photo Now'}</span>
+                </button>
+              </div>
             </div>
 
             {/* Profile Fields Details */}

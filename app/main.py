@@ -12,15 +12,20 @@ if str(_ROOT) not in sys.path:
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.database import init_db, session_scope
-from app.routers import admin, auth, health, superadmin
+from app.routers import admin, auth, health, superadmin, webhooks
 from app.seed import seed_superadmin
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 settings = get_settings()
+
+uploads_path = Path("uploads")
+uploads_path.mkdir(parents=True, exist_ok=True)
+(uploads_path / "photos").mkdir(parents=True, exist_ok=True)
 
 
 @asynccontextmanager
@@ -48,10 +53,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(superadmin.router)
+app.include_router(webhooks.router)
 
 
 if __name__ == "__main__":

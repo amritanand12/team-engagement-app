@@ -121,6 +121,11 @@ class Organization(Base):
     slack_webhook_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     teams_webhook_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
+    # Photo Request Automation
+    photo_request_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    photo_request_days_ahead: Mapped[int] = mapped_column(Integer, default=7)
+    google_form_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -142,6 +147,9 @@ class EmployeeProfile(Base):
     preferred_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     email: Mapped[str] = mapped_column(String(255), index=True)
     photo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    has_custom_photo: Mapped[bool] = mapped_column(Boolean, default=False)
+    photo_request_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    photo_upload_token: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True, index=True)
 
     date_of_birth: Mapped[date | None] = mapped_column(Date, nullable=True)
     date_of_joining: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -218,6 +226,7 @@ class EventLog(Base):
     template_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("event_template.id"), nullable=True)
     rendered_subject: Mapped[str | None] = mapped_column(String(500), nullable=True)
     rendered_html: Mapped[str | None] = mapped_column(Text, nullable=True)
+    used_custom_photo: Mapped[bool] = mapped_column(Boolean, default=False)
 
     status: Mapped[EventStatus] = mapped_column(Enum(EventStatus), default=EventStatus.PENDING, index=True)
     batch_id: Mapped[str] = mapped_column(String(10), index=True)  # YYYY-MM-DD of the scan that created it

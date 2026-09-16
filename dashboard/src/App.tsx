@@ -11,8 +11,17 @@ import { DigestsPage } from './pages/DigestsPage';
 import { TemplatesPage } from './pages/TemplatesPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SuperAdminPage } from './pages/SuperAdminPage';
+import { PhotoUploadPortal } from './pages/PhotoUploadPortal';
 
 const AppContent: React.FC = () => {
+  const isPhotoUploadRoute =
+    window.location.pathname.includes('/upload-photo') ||
+    Boolean(new URLSearchParams(window.location.search).get('token'));
+
+  if (isPhotoUploadRoute) {
+    return <PhotoUploadPortal />;
+  }
+
   const { isAuthenticated, isSuperAdmin, user, activeOrg, selectedTenantId } = useAuth();
   const [activeTab, setActiveTab] = useState<NavTab>(() => (isSuperAdmin ? 'superadmin' : 'overview'));
   const [refreshKey, setRefreshKey] = useState(0);

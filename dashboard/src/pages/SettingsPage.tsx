@@ -23,6 +23,7 @@ import {
   Server,
   Send,
   AlertTriangle,
+  Camera,
 } from 'lucide-react';
 
 export const SettingsPage: React.FC = () => {
@@ -75,8 +76,12 @@ export const SettingsPage: React.FC = () => {
     digest_channel_id: 'general',
     slack_webhook_url: '',
     teams_webhook_url: '',
+    photo_request_enabled: true,
+    photo_request_days_ahead: 7,
+    google_form_url: '',
   });
 
+  const [scanningPhotoRequests, setScanningPhotoRequests] = useState(false);
   const toast = useToast();
 
   const fetchOrganization = async () => {
@@ -92,6 +97,9 @@ export const SettingsPage: React.FC = () => {
         digest_channel_id: data.digest_channel_id || 'general',
         slack_webhook_url: data.slack_webhook_url || '',
         teams_webhook_url: data.teams_webhook_url || '',
+        photo_request_enabled: data.photo_request_enabled ?? true,
+        photo_request_days_ahead: data.photo_request_days_ahead ?? 7,
+        google_form_url: data.google_form_url || '',
       });
       // DB
       setDbHost(data.db_host || '');
@@ -127,6 +135,21 @@ export const SettingsPage: React.FC = () => {
       toast.error('Save Failed', err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTriggerPhotoScan = async () => {
+    setScanningPhotoRequests(true);
+    try {
+      const results = await api.scanPhotoRequests();
+      toast.success(
+        'Photo Scan Complete',
+        `Dispatched photo request emails for ${results.length} upcoming celebration(s).`
+      );
+    } catch (err: any) {
+      toast.error('Scan Failed', err.message);
+    } finally {
+      setScanningPhotoRequests(false);
     }
   };
 
@@ -765,7 +788,83 @@ export const SettingsPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Section 5: Webhooks & Delivery Channels */}
+        {/* Section 5: Celebration Photo Request & Google Form */}
+        <div className="p-6 rounded-2xl bg-white border border-slate-100 shadow-sm space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+              <Camera className="w-4 h-4 text-rose-500" />
+              <span>Celebration Photo Request & Google Form</span>
+            </h3>
+            <button
+              type="button"
+              onClick={handleTriggerPhotoScan}
+              disabled={scanningPhotoRequests}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold transition-colors cursor-pointer"
+            >
+              <Send className={`w-3.5 h-3.5 ${scanningPhotoRequests ? 'animate-spin' : ''}`} />
+              <span>{scanningPhotoRequests ? 'Scanning...' : 'Send Advance Photo Requests Now'}</span>
+            </button>
+          </div>
+
+          <p className="text-xs text-slate-500">
+            Automatically email employees ahead of their upcoming birthday or anniversary asking for a favorite photo to feature in their celebration email. If no photo is submitted, the standard template with default company avatar will be used.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+            <div className="sm:col-span-2 flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="photoRequestEnabled"
+                checked={formData.photo_request_enabled ?? true}
+                onChange={(e) => setFormData({ ...formData, photo_request_enabled: e.target.checked })}
+                className="rounded text-rose-600 focus:ring-rose-500 h-4 w-4"
+              />
+              <label htmlFor="photoRequestEnabled" className="font-semibold text-slate-700 cursor-pointer">
+                Enable automated advance photo request emails
+              </label>
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Days in Advance to Request Photo *</label>
+              <input
+                type="number"
+                min="1"
+                max="30"
+                value={formData.photo_request_days_ahead ?? 7}
+                onChange={(e) => setFormData({ ...formData, photo_request_days_ahead: Number(e.target.value) })}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
+              />
+              <p className="text-[11px] text-slate-400 mt-1">e.g. 7 days before their birthday or work anniversary</p>
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Google Form URL (Optional Override)</label>
+              <input
+                type="url"
+                value={formData.google_form_url || ''}
+                onChange={(e) => setFormData({ ...formData, google_form_url: e.target.value })}
+                placeholder="https://forms.gle/... or https://docs.google.com/forms/..."
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
+              />
+              <p className="text-[11px] text-slate-400 mt-1">Leave blank to use the built-in 1-click photo upload portal</p>
+            </div>
+          </div>
+
+          {formData.google_form_url && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 space-y-1">
+              <p className="font-semibold flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                Google Form Webhook Note
+              </p>
+              <p className="text-[11px] leading-relaxed text-amber-700">
+                To sync responses automatically from your Google Form, add a Google Apps Script to your form that HTTP POSTs submitted data to:
+                <code className="ml-1 bg-amber-100 px-1.5 py-0.5 rounded font-mono text-[10px]">http://localhost:8000/api/webhooks/google-form-photo</code>
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Section 6: Webhooks & Delivery Channels */}
         <div className="p-6 rounded-2xl bg-white border border-slate-100 shadow-sm space-y-4">
           <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 border-b border-slate-100 pb-3">
             <MessageSquare className="w-4 h-4 text-emerald-500" />

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Share Your Photo for Your Upcoming Celebration!</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f4f7;font-family:'Segoe UI',Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f7;padding:32px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="520" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,0.08);border:1px solid #e5e7eb;">
+          <!-- Header Banner -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#6366f1,#8b5cf6,#ec4899);padding:32px 28px;text-align:center;">
+              {% if company_logo_url %}
+              <img src="{{ company_logo_url }}" alt="{{ company_name }}" height="32" style="margin-bottom:16px;max-width:180px;object-fit:contain;" />
+              {% endif %}
+              <h1 style="color:#ffffff;margin:0;font-size:24px;font-weight:700;letter-spacing:-0.5px;">📸 Your Celebration is Approaching!</h1>
+              <p style="color:#f3e8ff;margin:8px 0 0;font-size:14px;">Let's make your special day memorable at {{ company_name }}</p>
+            </td>
+          </tr>
+
+          <!-- Main Body -->
+          <tr>
+            <td style="padding:36px 32px;text-align:center;">
+              <p style="color:#1e293b;font-size:17px;font-weight:600;margin:0 0 12px;">
+                Hi {{ name }},
+              </p>
+              <p style="color:#475569;font-size:15px;line-height:1.6;margin:0 0 20px;">
+                Your <strong>{{ event_label }}</strong> is coming up on <strong>{{ celebration_date }}</strong>! 
+                We would love to feature a photo of your choice in your celebratory announcement and company digest.
+              </p>
+
+              <!-- Photo Highlight Box -->
+              <div style="background:#f8fafc;border:2px dashed #cbd5e1;border-radius:12px;padding:24px 20px;margin:24px 0;">
+                <p style="color:#334155;font-size:14px;margin:0 0 16px;line-height:1.5;">
+                  Choose your favorite headshot, vacation picture, or a memorable moment you'd love to share with the team:
+                </p>
+
+                <!-- Action Button -->
+                <table role="presentation" border="0" cellpadding="0" cellspacing="0" style="margin:0 auto;">
+                  <tr>
+                    <td align="center" style="border-radius:10px;background:linear-gradient(135deg,#4f46e5,#7c3aed);">
+                      <a href="{{ upload_link }}" target="_blank"
+                         style="display:inline-block;padding:14px 28px;font-size:15px;color:#ffffff;text-decoration:none;font-weight:600;border-radius:10px;">
+                        ✨ Submit Your Photo Here
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+                <p style="color:#64748b;font-size:12px;margin:12px 0 0;font-weight:500;">
+                  ⏳ This personalized upload link is valid for 7 days.
+                </p>
+              </div>
+
+              <p style="color:#64748b;font-size:13px;line-height:1.5;margin:16px 0 0;">
+                <em>No photo? No problem! If you don't upload a photo, we will use our standard celebration template with your company avatar.</em>
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background:#f8fafc;padding:20px 32px;text-align:center;border-top:1px solid #f1f5f9;">
+              <p style="color:#94a3b8;font-size:12px;margin:0;">
+                Sent with warm wishes from <strong>{{ company_name }}</strong> People & Culture Team
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
