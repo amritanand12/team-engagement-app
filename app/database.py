@@ -194,10 +194,22 @@ def _run_auto_migrations(eng: Engine) -> None:
                 conn.execute(text("ALTER TABLE employee_profile ADD COLUMN birthday_template_id VARCHAR(36)"))
             if "anniversary_template_id" not in cols:
                 conn.execute(text("ALTER TABLE employee_profile ADD COLUMN anniversary_template_id VARCHAR(36)"))
+            if "has_custom_photo" not in cols:
+                conn.execute(text("ALTER TABLE employee_profile ADD COLUMN has_custom_photo BOOLEAN DEFAULT FALSE"))
+            if "photo_request_sent_at" not in cols:
+                conn.execute(text("ALTER TABLE employee_profile ADD COLUMN photo_request_sent_at TIMESTAMP"))
+            if "photo_upload_token" not in cols:
+                conn.execute(text("ALTER TABLE employee_profile ADD COLUMN photo_upload_token VARCHAR(128)"))
+            if "preferred_name" not in cols:
+                conn.execute(text("ALTER TABLE employee_profile ADD COLUMN preferred_name VARCHAR(255)"))
+            if "team_channel_id" not in cols:
+                conn.execute(text("ALTER TABLE employee_profile ADD COLUMN team_channel_id VARCHAR(255)"))
             conn.commit()
 
         if "organization" in tables:
             cols = [c["name"] for c in inspector.get_columns("organization")]
+            if "company_logo_url" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN company_logo_url VARCHAR(1024)"))
             if "db_host" not in cols:
                 conn.execute(text("ALTER TABLE organization ADD COLUMN db_host VARCHAR(255)"))
             if "db_port" not in cols:
@@ -212,6 +224,16 @@ def _run_auto_migrations(eng: Engine) -> None:
                 conn.execute(text("ALTER TABLE organization ADD COLUMN db_ssl_mode VARCHAR(32) DEFAULT 'prefer'"))
             if "is_db_configured" not in cols:
                 conn.execute(text("ALTER TABLE organization ADD COLUMN is_db_configured BOOLEAN DEFAULT FALSE"))
+            if "smtp_host" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN smtp_host VARCHAR(255)"))
+            if "smtp_port" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN smtp_port INTEGER DEFAULT 587"))
+            if "smtp_username" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN smtp_username VARCHAR(255)"))
+            if "smtp_password" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN smtp_password VARCHAR(512)"))
+            if "smtp_from_address" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN smtp_from_address VARCHAR(255)"))
             if "smtp_use_tls" not in cols:
                 conn.execute(text("ALTER TABLE organization ADD COLUMN smtp_use_tls BOOLEAN DEFAULT TRUE"))
             if "is_smtp_configured" not in cols:
@@ -222,9 +244,49 @@ def _run_auto_migrations(eng: Engine) -> None:
                 conn.execute(text("ALTER TABLE organization ADD COLUMN cached_employee_count INTEGER DEFAULT 0"))
             if "cached_event_count" not in cols:
                 conn.execute(text("ALTER TABLE organization ADD COLUMN cached_event_count INTEGER DEFAULT 0"))
+            if "slack_webhook_url" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN slack_webhook_url VARCHAR(1024)"))
+            if "teams_webhook_url" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN teams_webhook_url VARCHAR(1024)"))
+            if "photo_request_enabled" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN photo_request_enabled BOOLEAN DEFAULT TRUE"))
+            if "photo_request_days_ahead" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN photo_request_days_ahead INTEGER DEFAULT 7"))
+            if "google_form_url" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN google_form_url VARCHAR(1024)"))
+            if "is_demo" not in cols:
+                conn.execute(text("ALTER TABLE organization ADD COLUMN is_demo BOOLEAN DEFAULT FALSE"))
 
             # Keep demo organizations unlocked so demo sandboxes and tests run seamlessly
             conn.execute(text("UPDATE organization SET is_setup_complete = TRUE, is_db_configured = TRUE, is_smtp_configured = TRUE WHERE is_demo = TRUE"))
+            conn.commit()
+
+        if "event_log" in tables:
+            cols = [c["name"] for c in inspector.get_columns("event_log")]
+            if "used_custom_photo" not in cols:
+                conn.execute(text("ALTER TABLE event_log ADD COLUMN used_custom_photo BOOLEAN DEFAULT FALSE"))
+            if "error_detail" not in cols:
+                conn.execute(text("ALTER TABLE event_log ADD COLUMN error_detail TEXT"))
+            if "years" not in cols:
+                conn.execute(text("ALTER TABLE event_log ADD COLUMN years INTEGER"))
+            if "attempt_count" not in cols:
+                conn.execute(text("ALTER TABLE event_log ADD COLUMN attempt_count INTEGER DEFAULT 0"))
+            conn.commit()
+
+        if "app_user" in tables:
+            cols = [c["name"] for c in inspector.get_columns("app_user")]
+            if "organization_id" not in cols:
+                conn.execute(text("ALTER TABLE app_user ADD COLUMN organization_id VARCHAR(36)"))
+            conn.commit()
+
+        if "audit_log" in tables:
+            cols = [c["name"] for c in inspector.get_columns("audit_log")]
+            if "organization_id" not in cols:
+                conn.execute(text("ALTER TABLE audit_log ADD COLUMN organization_id VARCHAR(36)"))
+            if "actor_id" not in cols:
+                conn.execute(text("ALTER TABLE audit_log ADD COLUMN actor_id VARCHAR(36)"))
+            if "ip_address" not in cols:
+                conn.execute(text("ALTER TABLE audit_log ADD COLUMN ip_address VARCHAR(45)"))
             conn.commit()
 
 
@@ -267,12 +329,14 @@ def get_tenant_engine(org: Any) -> Engine:
             org_id = getattr(org, "id", "")
             if org_id not in _tenant_engine_pool:
                 try:
-                    _tenant_engine_pool[org_id] = create_engine(
+                    eng = create_engine(
                         db_url,
                         pool_pre_ping=True,
                         pool_size=5,
                         max_overflow=10,
                     )
+                    _run_auto_migrations(eng)
+                    _tenant_engine_pool[org_id] = eng
                 except Exception as exc:
                     logger.warning("Failed to create engine for tenant %s: %s", org_id, exc)
                     return engine
@@ -356,9 +420,27 @@ def tenant_session_scope(org: Any) -> Iterator[Session]:
 
 
 def init_db() -> None:
-    """Create tables and apply incremental schema updates."""
+    """Create tables and apply incremental schema updates across platform and tenant databases."""
     from app import models  # noqa: F401  (ensures models are registered on Base)
 
     Base.metadata.create_all(bind=engine)
     _run_auto_migrations(engine)
+
+    # Auto-migrate all existing configured tenant databases on app startup
+    try:
+        with sessionmaker(bind=engine)() as s:
+            orgs = s.query(models.Organization).filter(
+                models.Organization.is_active.is_(True),
+                models.Organization.is_db_configured.is_(True),
+                models.Organization.is_demo.is_(False),
+            ).all()
+            for org in orgs:
+                try:
+                    t_eng = get_tenant_engine(org)
+                    _run_auto_migrations(t_eng)
+                except Exception as t_exc:
+                    logger.warning("Failed to auto-migrate tenant database for org %s: %s", getattr(org, "id", ""), t_exc)
+    except Exception as exc:
+        logger.warning("Failed to query tenant organizations for auto-migration: %s", exc)
+
 

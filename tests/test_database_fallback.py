@@ -150,3 +150,38 @@ def test_reset_engine_and_db_info():
     info = get_active_db_info()
     assert info["dialect"] == "sqlite"
     assert info["is_fallback"] is False
+
+
+def test_auto_migration_adds_missing_columns():
+    """Verify that _run_auto_migrations adds missing columns like has_custom_photo to an existing table."""
+    from sqlalchemy import inspect
+    from app.database import _run_auto_migrations
+
+    engine, _ = create_resilient_engine(database_url="sqlite://")
+    # Create an old employee_profile table lacking has_custom_photo
+    with engine.connect() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE employee_profile ("
+                "id VARCHAR(36) PRIMARY KEY, "
+                "organization_id VARCHAR(36), "
+                "employee_code VARCHAR(64), "
+                "full_name VARCHAR(255), "
+                "email VARCHAR(255)"
+                ")"
+            )
+        )
+        conn.commit()
+
+    inspector = inspect(engine)
+    cols_before = [c["name"] for c in inspector.get_columns("employee_profile")]
+    assert "has_custom_photo" not in cols_before
+
+    _run_auto_migrations(engine)
+
+    inspector = inspect(engine)
+    cols_after = [c["name"] for c in inspector.get_columns("employee_profile")]
+    assert "has_custom_photo" in cols_after
+    assert "photo_request_sent_at" in cols_after
+    assert "photo_upload_token" in cols_after
+

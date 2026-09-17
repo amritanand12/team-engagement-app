@@ -1,8 +1,51 @@
+# Environment & Secrets (NEVER commit credentials)
 .env
 .env.*
-dashboard/node_modules
+!.env.example
+
+# Python Virtual Environment
+.venv/
+venv/
+env/
+ENV/
+
+# Python Caches & Compiled Bytecode
 __pycache__/
 *.py[cod]
-.venv/
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# SQLite & Local Tenant Databases
 *.db
-*.db-*
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Uploaded Files & User Media
+uploads/
+uploads/photos/*
+!uploads/photos/.gitkeep
+
+# Frontend Node Modules & Build Artifacts (React / Vite)
+node_modules/
+dashboard/node_modules/
+dashboard/dist/
+dashboard/build/
+.eslintcache
+
+# IDE & Code Editor Configurations
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+Desktop.ini

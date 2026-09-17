@@ -57,6 +57,12 @@ class SMTPMailer(BaseMailer):
                 f"Set MAIL_PROVIDER=mock in .env for local testing, or configure a valid SMTP server."
             )
 
+        if not to or "@" not in to:
+            raise MailSendError(
+                f"Digest recipient address '{to}' is not a valid email address. "
+                f"Please update 'Digest Channel / Target Email' in Settings to a valid email (e.g. team@yourdomain.com)."
+            )
+
         if attachment_path and os.path.isfile(attachment_path):
             # multipart/related structure for RFC 2387 inline embedded images (cid:...)
             msg = MIMEMultipart("related")

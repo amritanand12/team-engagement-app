@@ -884,14 +884,15 @@ export const SettingsPage: React.FC = () => {
             </div>
 
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">Default Digest Channel Name / ID</label>
+              <label className="block font-semibold text-slate-700 mb-1">Daily Digest Target Email / Channel</label>
               <input
                 type="text"
                 value={formData.digest_channel_id || ''}
                 onChange={(e) => setFormData({ ...formData, digest_channel_id: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
-                placeholder="e.g. general or #celebrations"
+                placeholder="e.g. team-digest@company.com or hr@company.com"
               />
+              <p className="text-[11px] text-slate-400 mt-1">Target email address where the daily celebration digest is delivered via SMTP.</p>
             </div>
           </div>
         </div>

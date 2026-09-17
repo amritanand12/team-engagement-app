@@ -139,6 +139,27 @@ def check_onboarding_guard(org: Organization) -> None:
         )
 
 
+def refresh_onboarding_status(org: Organization) -> bool:
+    """
+    Evaluates whether an organization has completed setup requirements (DB + Email provider).
+    If MAIL_PROVIDER is 'mock' or 'system', DB configuration unlocks onboarding seamlessly.
+    """
+    if org.is_demo:
+        org.is_setup_complete = True
+        return True
+
+    has_db = bool(org.is_db_configured or (org.db_host and org.db_name))
+    has_smtp = bool(
+        org.is_smtp_configured
+        or (org.smtp_host and org.smtp_from_address)
+        or settings.MAIL_PROVIDER in ("mock", "system")
+    )
+
+    if has_db and has_smtp:
+        org.is_setup_complete = True
+    return org.is_setup_complete
+
+
 # ---------------------------------------------------------------------------
 # Organization Settings & Profile
 # ---------------------------------------------------------------------------
@@ -147,7 +168,10 @@ def check_onboarding_guard(org: Organization) -> None:
 @router.get("/organization", response_model=OrganizationOut)
 def get_organization_profile(
     org: Organization = Depends(get_current_org),
+    db: Session = Depends(get_db),
 ):
+    refresh_onboarding_status(org)
+    db.commit()
     return org
 
 
@@ -261,9 +285,8 @@ def save_database_configuration(
     org.db_ssl_mode = payload.db_ssl_mode
     org.is_db_configured = True
 
-    # Setup is complete if both DB and SMTP are configured
-    if org.is_smtp_configured:
-        org.is_setup_complete = True
+    # Setup status check (requires DB + SMTP or mock mailer)
+    refresh_onboarding_status(org)
 
     db.commit()
     db.refresh(org)
@@ -360,9 +383,8 @@ def save_smtp_configuration(
     org.smtp_use_tls = payload.smtp_use_tls
     org.is_smtp_configured = True
 
-    # Setup is complete if both DB and SMTP are configured
-    if org.is_db_configured:
-        org.is_setup_complete = True
+    # Setup status check (requires DB + SMTP or mock mailer)
+    refresh_onboarding_status(org)
 
     record_audit_log(
         db,
