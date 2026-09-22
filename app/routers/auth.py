@@ -40,6 +40,8 @@ LOCKOUT_DURATION_SECONDS = 60  # 60 seconds cooldown
 
 def check_rate_limit(identifier: str) -> int:
     """Returns seconds remaining if rate limited, or 0 if allowed."""
+    if settings.TESTING and not getattr(settings, "FORCE_RATE_LIMIT_TESTING", False):
+        return 0
     now = time.time()
     with _rate_limit_lock:
         attempts = [t for t in _failed_attempts.get(identifier, []) if now - t < LOCKOUT_WINDOW_SECONDS]
@@ -86,10 +88,12 @@ def get_current_user_and_org(
         # Resolve organization context
         active_org = None
         if user.role == UserRole.SUPER_ADMIN:
-            # SuperAdmin can optionally specify x-tenant-id to operate on behalf of a tenant
+            # SuperAdmin can optionally specify x-tenant-id (or slug) to operate on behalf of a tenant
             if x_tenant_id:
                 active_org = db.get(Organization, x_tenant_id)
-            else:
+                if not active_org:
+                    active_org = db.query(Organization).filter(Organization.slug == x_tenant_id).first()
+            if not active_org:
                 active_org = db.query(Organization).filter(Organization.slug == "default").first() or db.query(Organization).first()
         elif user.organization_id:
             active_org = db.get(Organization, user.organization_id)
@@ -178,13 +182,23 @@ def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
         db.commit()
         raise HTTPException(status_code=403, detail="Account is deactivated")
 
-    # Clear rate limit trackers on successful login
-    clear_failed_login(ip)
-    clear_failed_login(email_clean)
-
     org = None
     if user.organization_id:
         org = db.get(Organization, user.organization_id)
+        if org and not org.is_active and user.role != UserRole.SUPER_ADMIN:
+            record_audit_log(
+                db,
+                action="LOGIN_FAILED",
+                actor_email=user.email,
+                actor_role=user.role.value if hasattr(user.role, "value") else str(user.role),
+                actor_id=user.id,
+                organization_id=user.organization_id,
+                resource_type="auth",
+                details="Failed login attempt - organization is suspended",
+                ip_address=ip,
+            )
+            db.commit()
+            raise HTTPException(status_code=403, detail="Organization is suspended")
     elif user.role == UserRole.SUPER_ADMIN:
         org = db.query(Organization).filter(Organization.slug == "default").first() or db.query(Organization).first()
 

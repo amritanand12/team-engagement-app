@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -25,6 +26,17 @@ logger = logging.getLogger("engagement.webhooks")
 settings = get_settings()
 
 router = APIRouter(tags=["webhooks"])
+
+
+@router.get("/upload-photo")
+def redirect_to_photo_upload_portal(token: str | None = Query(None)):
+    """
+    Redirects direct GET requests to /upload-photo on the API server
+    to the frontend React upload portal URL.
+    """
+    base_url = settings.APP_BASE_URL.rstrip("/")
+    query_param = f"?token={token}" if token else ""
+    return RedirectResponse(url=f"{base_url}/upload-photo{query_param}", status_code=307)
 
 UPLOAD_DIR = Path("uploads/photos")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)

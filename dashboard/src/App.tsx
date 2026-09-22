@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
 import { Layout } from './components/layout/Layout';
-import { NavTab } from './components/layout/Sidebar';
+import { ProtectedRoute, PublicOnlyRoute, SuperAdminRoute } from './components/auth/ProtectedRoutes';
 import { LoginPage } from './pages/LoginPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { EventsPage } from './pages/EventsPage';
@@ -13,45 +14,9 @@ import { SettingsPage } from './pages/SettingsPage';
 import { SuperAdminPage } from './pages/SuperAdminPage';
 import { PhotoUploadPortal } from './pages/PhotoUploadPortal';
 
-const AppContent: React.FC = () => {
-  const isPhotoUploadRoute =
-    window.location.pathname.includes('/upload-photo') ||
-    Boolean(new URLSearchParams(window.location.search).get('token'));
-
-  if (isPhotoUploadRoute) {
-    return <PhotoUploadPortal />;
-  }
-
-  const { isAuthenticated, isSuperAdmin, user, activeOrg, selectedTenantId } = useAuth();
-  const [activeTab, setActiveTab] = useState<NavTab>(() => (isSuperAdmin ? 'superadmin' : 'overview'));
+const AppRoutes: React.FC = () => {
+  const { isSuperAdmin, activeOrg, selectedTenantId } = useAuth();
   const [refreshKey, setRefreshKey] = useState(0);
-  const prevUserIdRef = useRef<string | null>(null);
-
-  // Automatically navigate SuperAdmin to 'superadmin' (Platform Hub)
-  // and Org Admin to 'overview' upon login or session restore
-  useEffect(() => {
-    if (user && user.id !== prevUserIdRef.current) {
-      prevUserIdRef.current = user.id;
-      if (isSuperAdmin) {
-        setActiveTab('superadmin');
-      } else {
-        setActiveTab('overview');
-      }
-    } else if (!user) {
-      prevUserIdRef.current = null;
-    }
-  }, [user, isSuperAdmin]);
-
-  // Strictly enforce role-based tab isolation
-  useEffect(() => {
-    if (!isSuperAdmin && activeTab === 'superadmin') {
-      setActiveTab('overview');
-    }
-  }, [isSuperAdmin, activeTab]);
-
-  if (!isAuthenticated) {
-    return <LoginPage />;
-  }
 
   const handleRefreshAll = () => {
     setRefreshKey((prev) => prev + 1);
@@ -59,82 +24,98 @@ const AppContent: React.FC = () => {
 
   const tenantKey = `${refreshKey}-${selectedTenantId || activeOrg?.id || 'none'}`;
 
-  const renderActivePage = () => {
-    switch (activeTab) {
-      case 'superadmin':
-        if (!isSuperAdmin) {
-          return (
+  return (
+    <Routes>
+      {/* Public Photo Upload Portal */}
+      <Route path="/upload-photo" element={<PhotoUploadPortal />} />
+
+      {/* Public Only Route (Login) */}
+      <Route
+        path="/login"
+        element={
+          <PublicOnlyRoute>
+            <LoginPage />
+          </PublicOnlyRoute>
+        }
+      />
+
+      {/* Protected Routes inside App Layout */}
+      <Route
+        element={
+          <ProtectedRoute>
+            <Layout onRefreshData={handleRefreshAll} />
+          </ProtectedRoute>
+        }
+      >
+        <Route
+          path="/"
+          element={<Navigate to={isSuperAdmin ? '/superadmin/organizations' : '/overview'} replace />}
+        />
+        <Route
+          path="/overview"
+          element={
             <OverviewPage
               key={tenantKey}
-              onNavigateTab={(tab) => setActiveTab(tab)}
+              onNavigateTab={() => {}}
               onOpenScanModal={() => {}}
             />
-          );
-        }
-        return (
-          <SuperAdminPage
-            key={tenantKey}
-            onSwitchToTenant={() => setActiveTab('overview')}
-          />
-        );
-      case 'overview':
-        return (
-          <OverviewPage
-            key={tenantKey}
-            onNavigateTab={(tab) => setActiveTab(tab)}
-            onOpenScanModal={() => {}}
-          />
-        );
-      case 'events':
-        return <EventsPage key={tenantKey} />;
-      case 'employees':
-        return (
-          <EmployeesPage
-            key={tenantKey}
-            onNavigateTab={(tab) => setActiveTab(tab)}
-          />
-        );
-      case 'digests':
-        return <DigestsPage key={tenantKey} />;
-      case 'templates':
-        return <TemplatesPage key={tenantKey} />;
-      case 'settings':
-        return <SettingsPage key={tenantKey} />;
-      default:
-        return (
-          <OverviewPage
-            key={tenantKey}
-            onNavigateTab={(tab) => setActiveTab(tab)}
-            onOpenScanModal={() => {}}
-          />
-        );
-    }
-  };
+          }
+        />
+        <Route path="/events" element={<EventsPage key={tenantKey} />} />
+        <Route
+          path="/employees"
+          element={
+            <EmployeesPage
+              key={tenantKey}
+              onNavigateTab={() => {}}
+            />
+          }
+        />
+        <Route path="/digests" element={<DigestsPage key={tenantKey} />} />
+        <Route path="/templates" element={<TemplatesPage key={tenantKey} />} />
+        <Route path="/settings" element={<SettingsPage key={tenantKey} />} />
 
-  return (
-    <Layout
-      activeTab={activeTab}
-      onSelectTab={(tab) => {
-        if (tab === 'superadmin' && !isSuperAdmin) {
-          setActiveTab('overview');
-        } else {
-          setActiveTab(tab);
-        }
-      }}
-      onRefreshData={handleRefreshAll}
-    >
-      {renderActivePage()}
-    </Layout>
+        {/* SuperAdmin Routes */}
+        <Route
+          path="/superadmin"
+          element={<Navigate to="/superadmin/organizations" replace />}
+        />
+        <Route
+          path="/superadmin/organizations"
+          element={
+            <SuperAdminRoute>
+              <SuperAdminPage key={tenantKey} />
+            </SuperAdminRoute>
+          }
+        />
+        <Route
+          path="/superadmin/organizations/:orgId"
+          element={
+            <SuperAdminRoute>
+              <SuperAdminPage key={tenantKey} />
+            </SuperAdminRoute>
+          }
+        />
+
+        {/* Catch-all fallback */}
+        <Route
+          path="*"
+          element={<Navigate to="/" replace />}
+        />
+      </Route>
+    </Routes>
   );
 };
 
 export function App() {
   return (
-    <AuthProvider>
-      <ToastProvider>
-        <AppContent />
-      </ToastProvider>
-    </AuthProvider>
+    <BrowserRouter>
+      <AuthProvider>
+        <ToastProvider>
+          <AppRoutes />
+        </ToastProvider>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }
 

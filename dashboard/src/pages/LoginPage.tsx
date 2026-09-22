@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { EngagementMotionGraphic } from '../components/auth/EngagementMotionGraphic';
 import {
@@ -16,7 +17,8 @@ import {
 } from 'lucide-react';
 
 export const LoginPage: React.FC = () => {
-  const { loginWithEmail, authError, clearAuthError } = useAuth();
+  const navigate = useNavigate();
+  const { loginWithEmail, isSuperAdmin, authError, clearAuthError } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -49,6 +51,7 @@ export const LoginPage: React.FC = () => {
       } else {
         localStorage.removeItem('remembered_email');
       }
+      navigate(isSuperAdmin ? '/superadmin/organizations' : '/overview', { replace: true });
     }
   };
 

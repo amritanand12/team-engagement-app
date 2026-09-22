@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Sidebar, NavTab } from './Sidebar';
+import { Outlet } from 'react-router-dom';
+import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { Modal } from '../common/Modal';
 import { api } from '../../api/client';
@@ -7,18 +8,12 @@ import { useToast } from '../../context/ToastContext';
 import { ScanTriggerResponse, HrmsSyncResponse } from '../../types';
 import { Play, RefreshCw, CheckCircle2 } from 'lucide-react';
 
-
-
 interface LayoutProps {
-  activeTab: NavTab;
-  onSelectTab: (tab: NavTab) => void;
-  children: React.ReactNode;
+  children?: React.ReactNode;
   onRefreshData?: () => void;
 }
 
 export const Layout: React.FC<LayoutProps> = ({
-  activeTab,
-  onSelectTab,
   children,
   onRefreshData,
 }) => {
@@ -77,8 +72,6 @@ export const Layout: React.FC<LayoutProps> = ({
     <div className="min-h-screen bg-slate-50 flex">
       {/* Sidebar */}
       <Sidebar
-        activeTab={activeTab}
-        onSelectTab={onSelectTab}
         onOpenScanModal={() => {
           setScanResult(null);
           setIsScanModalOpen(true);
@@ -94,7 +87,6 @@ export const Layout: React.FC<LayoutProps> = ({
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col lg:pl-64 min-w-0">
         <Header
-          activeTab={activeTab}
           onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
           onOpenScanModal={() => {
             setScanResult(null);
@@ -106,7 +98,7 @@ export const Layout: React.FC<LayoutProps> = ({
           }}
         />
 
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">{children}</main>
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">{children || <Outlet />}</main>
       </div>
 
       {/* Run Scan Modal */}

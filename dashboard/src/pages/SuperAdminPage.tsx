@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { CreateTenantPayload, SuperAdminOrg } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { Modal } from '../components/common/Modal';
+import { OverviewPage } from './OverviewPage';
 import {
   Crown,
   Building,
@@ -17,17 +19,19 @@ import {
   RefreshCw,
   Clock,
   Sparkles,
-  Lock,
   Key,
   Trash2,
+  ArrowLeft,
 } from 'lucide-react';
 
 interface SuperAdminPageProps {
-  onSwitchToTenant: () => void;
+  onSwitchToTenant?: () => void;
 }
 
-export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ onSwitchToTenant }) => {
-  const { switchTenant } = useAuth();
+export const SuperAdminPage: React.FC<SuperAdminPageProps> = () => {
+  const { orgId } = useParams<{ orgId?: string }>();
+  const navigate = useNavigate();
+  const { switchTenant, selectedTenantId } = useAuth();
   const toast = useToast();
 
   const [orgs, setOrgs] = useState<SuperAdminOrg[]>([]);
@@ -68,6 +72,16 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ onSwitchToTenant
   useEffect(() => {
     fetchOrganizations();
   }, []);
+
+  // Sync selected organization in AuthContext when URL param orgId is present
+  useEffect(() => {
+    if (orgId && orgs.length > 0) {
+      const matchedOrg = orgs.find((o) => o.id === orgId || o.slug === orgId);
+      if (matchedOrg && selectedTenantId !== matchedOrg.id) {
+        switchTenant(matchedOrg.id, matchedOrg as any);
+      }
+    }
+  }, [orgId, orgs, selectedTenantId, switchTenant]);
 
   const handleCreateTenant = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -113,7 +127,12 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ onSwitchToTenant
   const handleSwitchTenant = (org: SuperAdminOrg) => {
     switchTenant(org.id, org as any);
     toast.info('Switched Tenant Context', `Now managing "${org.name}".`);
-    onSwitchToTenant();
+    navigate(`/superadmin/organizations/${org.slug || org.id}`);
+  };
+
+  const handleBackToOrgs = () => {
+    switchTenant(null);
+    navigate('/superadmin/organizations');
   };
 
   const openResetPasswordModal = (org: SuperAdminOrg) => {
@@ -170,6 +189,88 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = ({ onSwitchToTenant
 
   const totalEmployees = orgs.reduce((acc, o) => acc + o.employee_count, 0);
   const totalEvents = orgs.reduce((acc, o) => acc + o.event_count, 0);
+
+  if (orgId) {
+    const currentOrg = orgs.find((o) => o.id === orgId || o.slug === orgId);
+
+    if (!currentOrg && loading) {
+      return (
+        <div className="p-8 text-center text-slate-500">
+          <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-purple-600" />
+          Loading organization details...
+        </div>
+      );
+    }
+
+    if (!currentOrg) {
+      return (
+        <div className="p-8 bg-white rounded-2xl border border-slate-200 text-center space-y-4 shadow-sm">
+          <h3 className="text-lg font-bold text-slate-900">Organization Not Found</h3>
+          <p className="text-xs text-slate-500">No client organization matching identifier "{orgId}" was found.</p>
+          <button
+            type="button"
+            onClick={handleBackToOrgs}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Back to Client Organizations</span>
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        {/* Managed Organization Banner */}
+        <div className="p-5 rounded-2xl bg-gradient-to-r from-purple-950 via-indigo-950 to-slate-900 border border-purple-800/40 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xl">
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={handleBackToOrgs}
+              className="p-2.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-white text-xs font-semibold transition-colors flex items-center gap-1.5 shrink-0"
+              title="Return to Organizations List"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span className="hidden sm:inline">Back to Organizations</span>
+            </button>
+            <div>
+              <div className="flex items-center gap-2 mb-0.5">
+                <span className="text-[11px] font-extrabold text-purple-300 uppercase tracking-wider">SuperAdmin Managing:</span>
+                <span className="px-2 py-0.5 rounded bg-purple-500/20 border border-purple-400/30 text-purple-200 text-[10px] font-bold font-mono">
+                  slug: {currentOrg.slug}
+                </span>
+              </div>
+              <h2 className="text-xl font-extrabold text-white tracking-tight">
+                Manage Organization — {currentOrg.name}
+              </h2>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="hidden sm:inline-flex items-center gap-1 text-xs text-purple-200/80 font-mono">
+              <Clock className="w-3.5 h-3.5 text-purple-400" />
+              {currentOrg.business_timezone}
+            </span>
+            <span
+              className={`px-3 py-1 rounded-full text-xs font-bold border ${
+                currentOrg.is_active
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30'
+                  : 'bg-rose-500/20 text-rose-300 border-rose-400/30'
+              }`}
+            >
+              {currentOrg.is_active ? 'Active' : 'Suspended'}
+            </span>
+          </div>
+        </div>
+
+        {/* Overview Dashboard for this Organization */}
+        <OverviewPage
+          key={currentOrg.id}
+          onNavigateTab={() => {}}
+          onOpenScanModal={() => {}}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

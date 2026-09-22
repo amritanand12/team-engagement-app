@@ -52,6 +52,7 @@ class Settings:
     )
     COMPANY_NAME: str = os.getenv("COMPANY_NAME", "Your Company")
     COMPANY_LOGO_URL: str = os.getenv("COMPANY_LOGO_URL", "https://assets.example.com/logo.png")
+    APP_BASE_URL: str = os.getenv("APP_BASE_URL", os.getenv("FRONTEND_URL", "http://localhost:5173"))
 
     # --- Email delivery ---
     MAIL_PROVIDER: Literal["smtp", "mock"] = os.getenv("MAIL_PROVIDER", "smtp")  # type: ignore[assignment]

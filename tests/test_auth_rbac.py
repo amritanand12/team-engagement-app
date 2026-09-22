@@ -275,9 +275,13 @@ def test_api_key_web_login_disabled(client):
     assert "disabled in production" in resp.json()["detail"]
 
 
-def test_login_rate_limiting(db, client):
+def test_login_rate_limiting(db, client, monkeypatch):
     """Verifies brute-force protection locks out after 5 consecutive failures."""
-    from app.routers.auth import clear_failed_login
+    from app.config import get_settings
+    from app.routers.auth import _failed_attempts, clear_failed_login
+    _failed_attempts.clear()
+    s = get_settings()
+    monkeypatch.setattr(s, "FORCE_RATE_LIMIT_TESTING", True, raising=False)
     seed_default_organization(db)
 
     test_ip = "192.168.1.99"

@@ -23,6 +23,7 @@ from app.models import (
     EventType,
     Organization,
     User,
+    UserRole,
 )
 from app.schemas import (
     CsvImportResponse,
@@ -89,6 +90,21 @@ def get_current_user_and_org_context(
     )
     if not org:
         raise HTTPException(status_code=400, detail="No active organization selected")
+    return user, org
+
+
+def require_write_permission(
+    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+) -> tuple[User, Organization]:
+    """
+    Enforces read-only restriction for the Viewer role.
+    """
+    user, org = user_and_org
+    if user.role == UserRole.VIEWER:
+        raise HTTPException(
+            status_code=403,
+            detail="Forbidden: Viewer role has read-only access",
+        )
     return user, org
 
 
@@ -179,7 +195,7 @@ def get_organization_profile(
 def update_organization_profile(
     payload: OrganizationUpdateIn,
     request: Request,
-    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    user_and_org: tuple[User, Organization] = Depends(require_write_permission),
     db: Session = Depends(get_db),
 ):
     user, org = user_and_org
@@ -249,7 +265,7 @@ def test_database_connection(
 def save_database_configuration(
     payload: TestDbConnectionIn,
     request: Request,
-    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    user_and_org: tuple[User, Organization] = Depends(require_write_permission),
     db: Session = Depends(get_db),
 ):
     """
@@ -320,7 +336,7 @@ def save_database_configuration(
 @router.post("/settings/test-smtp", response_model=TestSmtpConnectionOut)
 def test_smtp_connection(
     payload: TestSmtpConnectionIn,
-    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    user_and_org: tuple[User, Organization] = Depends(require_write_permission),
 ):
     """
     Tests SMTP connectivity by attempting an SMTP handshake and sending a live test email.
@@ -366,7 +382,7 @@ def test_smtp_connection(
 def save_smtp_configuration(
     payload: TestSmtpConnectionIn,
     request: Request,
-    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    user_and_org: tuple[User, Organization] = Depends(require_write_permission),
     db: Session = Depends(get_db),
 ):
     """
@@ -411,7 +427,7 @@ def save_smtp_configuration(
 @router.post("/demo/reset", response_model=DemoResetResponse)
 def reset_demo(
     request: Request,
-    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    user_and_org: tuple[User, Organization] = Depends(require_write_permission),
     db: Session = Depends(get_db),
     tenant_db: Session = Depends(get_tenant_db),
 ):
@@ -450,7 +466,7 @@ def reset_demo(
 def trigger_scan(
     request: Request,
     scan_date: date | None = Query(default=None, description="Defaults to today"),
-    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    user_and_org: tuple[User, Organization] = Depends(require_write_permission),
     db: Session = Depends(get_db),
 ):
     """
@@ -521,7 +537,7 @@ def get_event(
 def resend_event(
     event_id: str,
     request: Request,
-    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    user_and_org: tuple[User, Organization] = Depends(require_write_permission),
     db: Session = Depends(get_db),
     tenant_db: Session = Depends(get_tenant_db),
 ):
@@ -675,7 +691,7 @@ def get_employee(
 def create_employee(
     payload: EmployeeCreateIn,
     request: Request,
-    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    user_and_org: tuple[User, Organization] = Depends(require_write_permission),
     db: Session = Depends(get_db),
     tenant_db: Session = Depends(get_tenant_db),
 ):
@@ -737,7 +753,7 @@ def update_employee(
     employee_id: str,
     payload: EmployeeUpdateIn,
     request: Request,
-    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    user_and_org: tuple[User, Organization] = Depends(require_write_permission),
     db: Session = Depends(get_db),
     tenant_db: Session = Depends(get_tenant_db),
 ):
@@ -801,7 +817,7 @@ def update_employee(
 def request_employee_photo(
     employee_id: str,
     request: Request,
-    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    user_and_org: tuple[User, Organization] = Depends(require_write_permission),
     db: Session = Depends(get_db),
     tenant_db: Session = Depends(get_tenant_db),
 ):
@@ -809,7 +825,7 @@ def request_employee_photo(
     Sends an email to the employee requesting a photo of their choice for their upcoming celebration.
     """
     user, org = user_and_org
-    success, message = send_single_photo_request(tenant_db, employee_id, org.id, force=True)
+    success, message = send_single_photo_request(tenant_db, employee_id, org.id, force=True, org=org)
     if not success:
         raise HTTPException(status_code=400, detail=message)
 
@@ -834,7 +850,7 @@ async def upload_employee_photo_admin(
     employee_id: str,
     request: Request,
     file: UploadFile = File(...),
-    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    user_and_org: tuple[User, Organization] = Depends(require_write_permission),
     db: Session = Depends(get_db),
     tenant_db: Session = Depends(get_tenant_db),
 ):
@@ -887,7 +903,7 @@ async def upload_employee_photo_admin(
 def trigger_advance_photo_requests_scan(
     request: Request,
     scan_date: date | None = Query(default=None, description="Defaults to today"),
-    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    user_and_org: tuple[User, Organization] = Depends(require_write_permission),
     db: Session = Depends(get_db),
     tenant_db: Session = Depends(get_tenant_db),
 ):
@@ -916,7 +932,7 @@ def trigger_advance_photo_requests_scan(
 async def upload_employees_csv(
     request: Request,
     file: UploadFile = File(...),
-    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    user_and_org: tuple[User, Organization] = Depends(require_write_permission),
     db: Session = Depends(get_db),
     tenant_db: Session = Depends(get_tenant_db),
 ):
@@ -986,7 +1002,7 @@ def list_templates(
 def create_template(
     payload: TemplateCreateIn,
     request: Request,
-    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    user_and_org: tuple[User, Organization] = Depends(require_write_permission),
     db: Session = Depends(get_db),
     tenant_db: Session = Depends(get_tenant_db),
 ):
@@ -1047,7 +1063,7 @@ def update_template(
     template_id: str,
     payload: TemplateUpdateIn,
     request: Request,
-    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    user_and_org: tuple[User, Organization] = Depends(require_write_permission),
     db: Session = Depends(get_db),
     tenant_db: Session = Depends(get_tenant_db),
 ):
@@ -1102,7 +1118,7 @@ def update_template(
 def delete_template(
     template_id: str,
     request: Request,
-    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    user_and_org: tuple[User, Organization] = Depends(require_write_permission),
     db: Session = Depends(get_db),
     tenant_db: Session = Depends(get_tenant_db),
 ):
@@ -1287,7 +1303,7 @@ def get_stats_summary(
 
 @router.post("/hrms-sync/trigger", response_model=HrmsSyncResponse)
 def trigger_hrms_sync(
-    user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
+    user_and_org: tuple[User, Organization] = Depends(require_write_permission),
     db: Session = Depends(get_db),
     tenant_db: Session = Depends(get_tenant_db),
 ):

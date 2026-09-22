@@ -1,42 +1,31 @@
 import React from 'react';
+import { useLocation } from 'react-router-dom';
 import { Menu, Play, RefreshCw, Clock, Crown, Building2 } from 'lucide-react';
-import { NavTab } from './Sidebar';
 import { useAuth } from '../../context/AuthContext';
 
 interface HeaderProps {
-  activeTab: NavTab;
   onOpenMobileSidebar: () => void;
   onOpenScanModal: () => void;
   onOpenHrmsSync: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
-  activeTab,
   onOpenMobileSidebar,
   onOpenScanModal,
   onOpenHrmsSync,
 }) => {
-  const { user, activeOrg, isSuperAdmin, role } = useAuth();
+  const { user, activeOrg, isSuperAdmin } = useAuth();
+  const location = useLocation();
 
   const getTabTitle = () => {
-    switch (activeTab) {
-      case 'superadmin':
-        return 'Platform SuperAdmin Hub';
-      case 'overview':
-        return 'Operations Overview';
-      case 'events':
-        return 'Celebration Events Log';
-      case 'employees':
-        return 'Employee Profiles Directory';
-      case 'digests':
-        return 'Team Digest Logs';
-      case 'templates':
-        return 'Email Templates & Variants';
-      case 'settings':
-        return 'Organization Settings';
-      default:
-        return 'Dashboard';
-    }
+    const p = location.pathname;
+    if (p.startsWith('/superadmin')) return 'Platform SuperAdmin Hub';
+    if (p.startsWith('/events')) return 'Celebration Events Log';
+    if (p.startsWith('/employees')) return 'Employee Profiles Directory';
+    if (p.startsWith('/digests')) return 'Team Digest Logs';
+    if (p.startsWith('/templates')) return 'Email Templates & Variants';
+    if (p.startsWith('/settings')) return 'Organization Settings';
+    return 'Operations Overview';
   };
 
   const todayFormatted = new Intl.DateTimeFormat('en-US', {

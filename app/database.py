@@ -298,15 +298,21 @@ _tenant_engine_pool: dict[str, Engine] = {}
 
 
 def get_tenant_db_url(org: Any) -> str | None:
-    """Constructs SQLAlchemy connection URL for a tenant's private PostgreSQL database."""
-    if not getattr(org, "is_db_configured", False) or not getattr(org, "db_host", None) or not getattr(org, "db_name", None):
+    """Constructs SQLAlchemy connection URL for a tenant's private database."""
+    if not getattr(org, "is_db_configured", False) or not getattr(org, "db_host", None):
+        return None
+
+    host = getattr(org, "db_host", "")
+    if host.startswith("sqlite"):
+        return host
+
+    if not getattr(org, "db_name", None):
         return None
 
     from app.services.crypto import decrypt_credential
     password = decrypt_credential(getattr(org, "db_password", None)) or ""
     user = getattr(org, "db_user", "postgres") or "postgres"
     port = getattr(org, "db_port", 5432) or 5432
-    host = getattr(org, "db_host", "localhost")
     db_name = getattr(org, "db_name", "")
     ssl_mode = getattr(org, "db_ssl_mode", "prefer") or "prefer"
 
@@ -329,12 +335,15 @@ def get_tenant_engine(org: Any) -> Engine:
             org_id = getattr(org, "id", "")
             if org_id not in _tenant_engine_pool:
                 try:
-                    eng = create_engine(
-                        db_url,
-                        pool_pre_ping=True,
-                        pool_size=5,
-                        max_overflow=10,
-                    )
+                    if db_url.startswith("sqlite"):
+                        eng = _build_sqlite_engine(db_url)
+                    else:
+                        eng = create_engine(
+                            db_url,
+                            pool_pre_ping=True,
+                            pool_size=5,
+                            max_overflow=10,
+                        )
                     _run_auto_migrations(eng)
                     _tenant_engine_pool[org_id] = eng
                 except Exception as exc:

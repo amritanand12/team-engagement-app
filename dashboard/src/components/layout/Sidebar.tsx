@@ -1,4 +1,5 @@
 import React from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   CalendarCheck,
@@ -10,15 +11,12 @@ import {
   LogOut,
   Settings as SettingsIcon,
   Crown,
-  Building,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 export type NavTab = 'superadmin' | 'overview' | 'events' | 'employees' | 'digests' | 'templates' | 'settings';
 
 interface SidebarProps {
-  activeTab: NavTab;
-  onSelectTab: (tab: NavTab) => void;
   onOpenScanModal: () => void;
   onOpenHrmsSync: () => void;
   isMobileOpen: boolean;
@@ -26,28 +24,46 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
-  activeTab,
-  onSelectTab,
   onOpenScanModal,
   onOpenHrmsSync,
   isMobileOpen,
   onCloseMobile,
 }) => {
   const { user, activeOrg, isSuperAdmin, logout } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const getActiveTab = (): NavTab => {
+    const p = location.pathname;
+    if (p.startsWith('/superadmin')) return 'superadmin';
+    if (p.startsWith('/events')) return 'events';
+    if (p.startsWith('/employees')) return 'employees';
+    if (p.startsWith('/digests')) return 'digests';
+    if (p.startsWith('/templates')) return 'templates';
+    if (p.startsWith('/settings')) return 'settings';
+    return 'overview';
+  };
+
+  const activeTab = getActiveTab();
 
   const navItems = [
-    ...(isSuperAdmin ? [{ id: 'superadmin' as NavTab, label: 'Platform Hub', icon: Crown }] : []),
-    { id: 'overview' as NavTab, label: 'Overview', icon: LayoutDashboard },
-    { id: 'events' as NavTab, label: 'Events Log', icon: CalendarCheck },
-    { id: 'employees' as NavTab, label: 'Employees', icon: Users },
-    { id: 'digests' as NavTab, label: 'Daily Digests', icon: Mail },
-    { id: 'templates' as NavTab, label: 'Templates', icon: FileCode },
-    { id: 'settings' as NavTab, label: 'Settings & Demo', icon: SettingsIcon },
+    ...(isSuperAdmin ? [{ id: 'superadmin' as NavTab, path: '/superadmin/organizations', label: 'Platform Hub', icon: Crown }] : []),
+    { id: 'overview' as NavTab, path: '/overview', label: 'Overview', icon: LayoutDashboard },
+    { id: 'events' as NavTab, path: '/events', label: 'Events Log', icon: CalendarCheck },
+    { id: 'employees' as NavTab, path: '/employees', label: 'Employees', icon: Users },
+    { id: 'digests' as NavTab, path: '/digests', label: 'Daily Digests', icon: Mail },
+    { id: 'templates' as NavTab, path: '/templates', label: 'Templates', icon: FileCode },
+    { id: 'settings' as NavTab, path: '/settings', label: 'Settings & Demo', icon: SettingsIcon },
   ];
 
-  const handleNavClick = (tab: NavTab) => {
-    onSelectTab(tab);
+  const handleNavClick = (path: string) => {
+    navigate(path);
     onCloseMobile();
+  };
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login', { replace: true });
   };
 
   return (
@@ -91,7 +107,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 key={item.id}
                 type="button"
-                onClick={() => handleNavClick(item.id)}
+                onClick={() => handleNavClick(item.path)}
                 className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium border transition-colors duration-150 outline-none focus:outline-none focus:ring-0 select-none ${
                   isActive
                     ? isPlatformTab
@@ -158,7 +174,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
             <button
               type="button"
-              onClick={logout}
+              onClick={handleLogout}
               className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors shrink-0"
               title="End Session (Logout)"
             >
@@ -170,3 +186,4 @@ export const Sidebar: React.FC<SidebarProps> = ({
     </>
   );
 };
+

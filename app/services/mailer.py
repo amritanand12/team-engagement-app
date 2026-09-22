@@ -103,12 +103,18 @@ class SMTPMailer(BaseMailer):
             msg.attach(MIMEText(html, "html", "utf-8"))
 
         try:
-            with smtplib.SMTP(self.host, self.port, timeout=15) as server:
-                if self.use_tls:
-                    server.starttls()
-                if self.username:
-                    server.login(self.username, self.password)
-                server.sendmail(self.from_address, [to], msg.as_string())
+            if self.port == 465:
+                with smtplib.SMTP_SSL(self.host, self.port, timeout=15) as server:
+                    if self.username:
+                        server.login(self.username, self.password)
+                    server.sendmail(self.from_address, [to], msg.as_string())
+            else:
+                with smtplib.SMTP(self.host, self.port, timeout=15) as server:
+                    if self.use_tls:
+                        server.starttls()
+                    if self.username:
+                        server.login(self.username, self.password)
+                    server.sendmail(self.from_address, [to], msg.as_string())
         except (smtplib.SMTPException, OSError) as exc:
             raise MailSendError(str(exc)) from exc
 
@@ -131,18 +137,26 @@ class MockMailer(BaseMailer):
 def get_mailer(org: object | None = None) -> BaseMailer:
     if settings.MAIL_PROVIDER == "mock" or settings.TESTING:
         return MockMailer()
-    if org and getattr(org, "smtp_host", None):
-        from app.services.crypto import decrypt_credential
-        raw_pw = getattr(org, "smtp_password", None)
-        decrypted_pw = decrypt_credential(raw_pw) if raw_pw else None
-        return SMTPMailer(
-            host=getattr(org, "smtp_host", None),
-            port=getattr(org, "smtp_port", None),
-            username=getattr(org, "smtp_username", None),
-            password=decrypted_pw,
-            from_address=getattr(org, "smtp_from_address", None),
-            use_tls=getattr(org, "smtp_use_tls", True),
-        )
+    if org:
+        smtp_host = getattr(org, "smtp_host", None)
+        if smtp_host:
+            from app.services.crypto import decrypt_credential
+            raw_pw = getattr(org, "smtp_password", None)
+            decrypted_pw = decrypt_credential(raw_pw) if raw_pw else None
+            return SMTPMailer(
+                host=smtp_host,
+                port=getattr(org, "smtp_port", None),
+                username=getattr(org, "smtp_username", None),
+                password=decrypted_pw,
+                from_address=getattr(org, "smtp_from_address", None),
+                use_tls=getattr(org, "smtp_use_tls", True),
+            )
+        else:
+            org_name = getattr(org, "name", "organization")
+            raise MailSendError(
+                f"Tenant SMTP configuration is not set for {org_name}. "
+                f"Please configure tenant SMTP settings in Settings -> Step 2."
+            )
     return SMTPMailer()
 
 

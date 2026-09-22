@@ -45,8 +45,7 @@ def get_photo_submission_link(employee: EmployeeProfile, org: Organization) -> s
         return org.google_form_url.strip()
 
     token = ensure_photo_token(employee)
-    # Default to dashboard portal URL; can be configured via environment
-    base_url = "http://localhost:5173" if settings.TESTING else "http://localhost:8080"
+    base_url = settings.APP_BASE_URL.rstrip("/")
     return f"{base_url}/upload-photo?token={token}"
 
 
@@ -85,6 +84,7 @@ def send_single_photo_request(
     employee_id: str,
     organization_id: str | None = None,
     force: bool = False,
+    org: Organization | None = None,
 ) -> tuple[bool, str]:
     """
     Manually triggers a photo request email to an employee.
@@ -100,9 +100,15 @@ def send_single_photo_request(
     if not employee.email:
         return False, "Employee has no email address"
 
-    org = employee.organization
+    if not org or not getattr(org, "smtp_host", None):
+        org_id_to_fetch = organization_id or (employee.organization_id if employee else None)
+        if org_id_to_fetch:
+            from app.database import SessionLocal
+            with SessionLocal() as platform_db:
+                org = platform_db.get(Organization, org_id_to_fetch)
+
     if not org:
-        org = db.get(Organization, employee.organization_id)
+        org = employee.organization
 
     # Determine next celebration event
     today = date.today()
