@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import time
 import urllib.parse
 from datetime import date, datetime, timedelta
@@ -9,6 +11,7 @@ from typing import Iterator
 import uuid
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy import create_engine, func, or_, text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -1351,3 +1354,127 @@ def get_digest(
     if not digest:
         raise HTTPException(status_code=404, detail="No digest for this batch_id")
     return digest
+
+
+# ---------------------------------------------------------------------------
+# Executive Reports & CSV Data Exports
+# ---------------------------------------------------------------------------
+
+
+@router.get("/reports/events/export")
+def export_events_csv(
+    batch_id: str | None = Query(default=None),
+    status: EventStatus | None = Query(default=None),
+    org: Organization = Depends(get_current_org),
+    tenant_db: Session = Depends(get_tenant_db),
+):
+    """
+    Exports celebration event logs as a CSV file for HR compliance and executive audit reporting.
+    """
+    q = tenant_db.query(EventLog).filter(EventLog.organization_id == org.id)
+    if batch_id:
+        q = q.filter(EventLog.batch_id == batch_id)
+    if status:
+        q = q.filter(EventLog.status == status)
+
+    events = q.order_by(EventLog.event_date.desc()).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Event ID",
+        "Batch ID",
+        "Event Type",
+        "Employee Code",
+        "Employee Name",
+        "Employee Email",
+        "Event Date",
+        "Tenure Years",
+        "Status",
+        "Attempt Count",
+        "Error Detail",
+        "Sent At",
+        "Created At",
+    ])
+
+    for ev in events:
+        emp_name = ev.employee.full_name if ev.employee else ""
+        emp_code = ev.employee.employee_code if ev.employee else ""
+        emp_email = ev.employee.email if ev.employee else ""
+        writer.writerow([
+            ev.id,
+            ev.batch_id,
+            ev.event_type.value if hasattr(ev.event_type, "value") else str(ev.event_type),
+            emp_code,
+            emp_name,
+            emp_email,
+            ev.event_date.isoformat() if ev.event_date else "",
+            ev.years or "",
+            ev.status.value if hasattr(ev.status, "value") else str(ev.status),
+            ev.attempt_count,
+            ev.error_detail or "",
+            ev.sent_at.isoformat() if ev.sent_at else "",
+            ev.created_at.isoformat() if ev.created_at else "",
+        ])
+
+    output.seek(0)
+    filename = f"{org.slug}_celebration_events_{date.today().isoformat()}.csv"
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.get("/reports/employees/export")
+def export_employees_csv(
+    is_active: bool | None = Query(default=None),
+    org: Organization = Depends(get_current_org),
+    tenant_db: Session = Depends(get_tenant_db),
+):
+    """
+    Exports employee roster and celebration metadata as a CSV file.
+    """
+    q = tenant_db.query(EmployeeProfile).filter(EmployeeProfile.organization_id == org.id)
+    if is_active is not None:
+        q = q.filter(EmployeeProfile.is_active.is_(is_active))
+
+    employees = q.order_by(EmployeeProfile.full_name.asc()).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Employee ID",
+        "Employee Code",
+        "Full Name",
+        "Preferred Name",
+        "Email",
+        "Date of Birth",
+        "Date of Joining",
+        "Department",
+        "Is Active",
+        "Last Synced At",
+    ])
+
+    for emp in employees:
+        writer.writerow([
+            emp.id,
+            emp.employee_code,
+            emp.full_name,
+            emp.preferred_name or "",
+            emp.email,
+            emp.date_of_birth.isoformat() if emp.date_of_birth else "",
+            emp.date_of_joining.isoformat() if emp.date_of_joining else "",
+            emp.department or "",
+            "True" if emp.is_active else "False",
+            emp.last_synced_at.isoformat() if emp.last_synced_at else "",
+        ])
+
+    output.seek(0)
+    filename = f"{org.slug}_employee_roster_{date.today().isoformat()}.csv"
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+

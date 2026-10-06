@@ -55,11 +55,33 @@ app.add_middleware(
 
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
+from fastapi import HTTPException
+from fastapi.responses import FileResponse, RedirectResponse
+
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(superadmin.router)
 app.include_router(webhooks.router)
+
+dashboard_dist = Path("dashboard/dist")
+if dashboard_dist.exists() and (dashboard_dist / "index.html").exists():
+    if (dashboard_dist / "assets").exists():
+        app.mount("/assets", StaticFiles(directory=dashboard_dist / "assets"), name="dashboard_assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        if full_path.startswith(("admin", "auth", "health", "docs", "openapi.json", "uploads", "superadmin")):
+            raise HTTPException(status_code=404, detail="Not Found")
+        file_path = dashboard_dist / full_path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(dashboard_dist / "index.html")
+else:
+    @app.get("/", include_in_schema=False)
+    def root_redirect():
+        return RedirectResponse(url="/docs")
+
 
 
 if __name__ == "__main__":
