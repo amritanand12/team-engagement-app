@@ -25,7 +25,7 @@ import {
   PublicPhotoInfo,
 } from '../types';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 const AUTH_TOKEN_KEY = 'auth-token';
 const API_KEY_STORAGE_KEY = 'x-api-key';
 const TENANT_ID_STORAGE_KEY = 'x-tenant-id';
