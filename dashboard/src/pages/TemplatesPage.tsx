@@ -66,9 +66,6 @@ export const TemplatesPage: React.FC = () => {
       api.getSuperAdminOrganizations()
         .then((data) => {
           setTenantList(data);
-          if (!activeOrg && data.length > 0) {
-            switchTenant(data[0].id, data[0] as any);
-          }
         })
         .catch(() => {});
     }
@@ -81,7 +78,9 @@ export const TemplatesPage: React.FC = () => {
       const data = await api.getTemplates();
       setTemplates(data);
     } catch (err: any) {
-      setError(err.message || 'Failed to load templates');
+      const message = err.message || 'Failed to load templates';
+      setError(message);
+      if (err.status === 403 || err.status === 503) toast.warning('Tenant database needs attention', message);
     } finally {
       setLoading(false);
     }

@@ -190,17 +190,10 @@ def run_tenant_pipeline(
     mailer = mailer or get_mailer(org)
     leap_policy = org.leap_day_policy if org else settings.LEAP_DAY_POLICY
 
-    from contextlib import nullcontext
     from app.database import tenant_session_scope
-
-    is_dedicated = bool(
-        org
-        and getattr(org, "is_db_configured", False)
-        and getattr(org, "db_host", None)
-        and getattr(org, "db_name", None)
-        and not getattr(org, "is_demo", False)
-    )
-    ctx = tenant_session_scope(org) if is_dedicated else nullcontext(db)
+    if org is None:
+        raise ValueError(f"Organization '{organization_id}' does not exist")
+    ctx = tenant_session_scope(org)
 
     with ctx as tdb:
         detected, batch_id = scanner.run_scan(
@@ -286,7 +279,10 @@ def run_daily_pipeline(
 
     last_result = None
     for org in orgs:
-        last_result = run_tenant_pipeline(db, org.id, scan_date=scan_date, mailer=mailer)
+        try:
+            last_result = run_tenant_pipeline(db, org.id, scan_date=scan_date, mailer=mailer)
+        except Exception:
+            logger.exception("Tenant pipeline failed for org %s", org.id)
 
     return last_result or PipelineResult(
         batch_id=scan_date.isoformat(),

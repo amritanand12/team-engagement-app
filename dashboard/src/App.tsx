@@ -3,7 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
 import { Layout } from './components/layout/Layout';
-import { ProtectedRoute, PublicOnlyRoute, SuperAdminRoute } from './components/auth/ProtectedRoutes';
+import { ProtectedRoute, PublicOnlyRoute, SuperAdminRoute, TenantContextRoute } from './components/auth/ProtectedRoutes';
 import { LoginPage } from './pages/LoginPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { EventsPage } from './pages/EventsPage';
@@ -12,6 +12,7 @@ import { DigestsPage } from './pages/DigestsPage';
 import { TemplatesPage } from './pages/TemplatesPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SuperAdminPage } from './pages/SuperAdminPage';
+import { AuditLogsPage } from './pages/AuditLogsPage';
 import { PhotoUploadPortal } from './pages/PhotoUploadPortal';
 
 const AppRoutes: React.FC = () => {
@@ -51,29 +52,31 @@ const AppRoutes: React.FC = () => {
           path="/"
           element={<Navigate to={isSuperAdmin ? '/superadmin/organizations' : '/overview'} replace />}
         />
-        <Route
-          path="/overview"
-          element={
+        <Route element={<TenantContextRoute />}>
+          <Route
+            path="/overview"
+            element={
             <OverviewPage
               key={tenantKey}
               onNavigateTab={() => {}}
               onOpenScanModal={() => {}}
             />
-          }
-        />
-        <Route path="/events" element={<EventsPage key={tenantKey} />} />
-        <Route
-          path="/employees"
-          element={
+            }
+          />
+          <Route path="/events" element={<EventsPage key={tenantKey} />} />
+          <Route
+            path="/employees"
+            element={
             <EmployeesPage
               key={tenantKey}
               onNavigateTab={() => {}}
             />
-          }
-        />
-        <Route path="/digests" element={<DigestsPage key={tenantKey} />} />
-        <Route path="/templates" element={<TemplatesPage key={tenantKey} />} />
-        <Route path="/settings" element={<SettingsPage key={tenantKey} />} />
+            }
+          />
+          <Route path="/digests" element={<DigestsPage key={tenantKey} />} />
+          <Route path="/templates" element={<TemplatesPage key={tenantKey} />} />
+          <Route path="/settings" element={<SettingsPage key={tenantKey} />} />
+        </Route>
 
         {/* SuperAdmin Routes */}
         <Route
@@ -93,6 +96,14 @@ const AppRoutes: React.FC = () => {
           element={
             <SuperAdminRoute>
               <SuperAdminPage key={tenantKey} />
+            </SuperAdminRoute>
+          }
+        />
+        <Route
+          path="/superadmin/audit-logs"
+          element={
+            <SuperAdminRoute>
+              <AuditLogsPage />
             </SuperAdminRoute>
           }
         />

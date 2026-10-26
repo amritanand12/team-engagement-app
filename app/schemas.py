@@ -420,8 +420,13 @@ class SuperAdminOrgOut(BaseModel):
     business_timezone: str
     is_active: bool
     is_demo: bool
-    employee_count: int
-    event_count: int
+    employee_count: int | None
+    event_count: int | None
+    is_db_configured: bool
+    is_smtp_configured: bool
+    is_setup_complete: bool
+    database_status: str
+    last_sync_at: datetime | None = None
     created_at: datetime
 
 

@@ -62,6 +62,7 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = () => {
     try {
       const data = await api.getSuperAdminOrganizations();
       setOrgs(data);
+      window.dispatchEvent(new Event('platform-tenants-updated'));
     } catch (err: any) {
       toast.error('Failed to load organizations', err.message);
     } finally {
@@ -81,7 +82,11 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = () => {
         switchTenant(matchedOrg.id, matchedOrg as any);
       }
     }
-  }, [orgId, orgs, selectedTenantId, switchTenant]);
+  }, [orgId, orgs]);
+
+  useEffect(() => {
+    if (!orgId && selectedTenantId) switchTenant(null);
+  }, [orgId]);
 
   const handleCreateTenant = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -127,7 +132,7 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = () => {
   const handleSwitchTenant = (org: SuperAdminOrg) => {
     switchTenant(org.id, org as any);
     toast.info('Switched Tenant Context', `Now managing "${org.name}".`);
-    navigate(`/superadmin/organizations/${org.slug || org.id}`);
+    navigate('/overview');
   };
 
   const handleBackToOrgs = () => {
@@ -187,8 +192,9 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = () => {
     toast.info('Copied', `API key for ${org.name} copied.`);
   };
 
-  const totalEmployees = orgs.reduce((acc, o) => acc + o.employee_count, 0);
-  const totalEvents = orgs.reduce((acc, o) => acc + o.event_count, 0);
+  const unavailableTenants = orgs.filter((org) => org.database_status === 'unavailable' || org.database_status === 'unconfigured').length;
+  const totalEmployees = orgs.reduce((acc, org) => acc + (org.employee_count ?? 0), 0);
+  const totalEvents = orgs.reduce((acc, org) => acc + (org.event_count ?? 0), 0);
 
   if (orgId) {
     const currentOrg = orgs.find((o) => o.id === orgId || o.slug === orgId);
@@ -325,7 +331,8 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = () => {
           </div>
           <div>
             <p className="text-2xl font-extrabold text-slate-900">{totalEmployees}</p>
-            <p className="text-xs font-medium text-slate-500">Total Tracked Employees</p>
+            <p className="text-xs font-medium text-slate-500">Employees counted{unavailableTenants ? ' (partial)' : ''}</p>
+            {unavailableTenants > 0 && <p className="text-[10px] text-amber-700">{unavailableTenants} tenant database(s) unavailable</p>}
           </div>
         </div>
 
@@ -335,7 +342,8 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = () => {
           </div>
           <div>
             <p className="text-2xl font-extrabold text-slate-900">{totalEvents}</p>
-            <p className="text-xs font-medium text-slate-500">Total Celebrations Delivered</p>
+            <p className="text-xs font-medium text-slate-500">Events sent{unavailableTenants ? ' (partial)' : ''}</p>
+            {unavailableTenants > 0 && <p className="text-[10px] text-amber-700">{unavailableTenants} tenant database(s) unavailable</p>}
           </div>
         </div>
       </div>
@@ -345,7 +353,7 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = () => {
         <div className="p-5 border-b border-slate-100 flex items-center justify-between">
           <div>
             <h3 className="text-sm font-bold text-slate-900">Provisioned Client Tenants</h3>
-            <p className="text-xs text-slate-500">Click &quot;Switch to Tenant&quot; to manage any company as SuperAdmin</p>
+            <p className="text-xs text-slate-500">Review setup and database health, then select a tenant to open its operations.</p>
           </div>
         </div>
 
@@ -357,6 +365,8 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = () => {
                 <th className="py-3.5 px-4">Timezone</th>
                 <th className="py-3.5 px-4 text-center">Employees</th>
                 <th className="py-3.5 px-4 text-center">Events Sent</th>
+                <th className="py-3.5 px-4">Setup & Database</th>
+                <th className="py-3.5 px-4">Last Employee Sync</th>
                 <th className="py-3.5 px-4 text-center">Status</th>
                 <th className="py-3.5 px-4 text-right">Actions</th>
               </tr>
@@ -406,11 +416,23 @@ export const SuperAdminPage: React.FC<SuperAdminPageProps> = () => {
                   </td>
 
                   <td className="py-3.5 px-4 text-center font-semibold text-slate-800">
-                    {org.employee_count}
+                    {org.employee_count ?? <span className="text-amber-700">Unavailable</span>}
                   </td>
 
                   <td className="py-3.5 px-4 text-center font-semibold text-slate-800">
-                    {org.event_count}
+                    {org.event_count ?? <span className="text-amber-700">Unavailable</span>}
+                  </td>
+
+                  <td className="py-3.5 px-4">
+                    <div className="flex flex-col items-start gap-1">
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${org.database_status === 'unavailable' ? 'bg-rose-50 text-rose-700' : org.database_status === 'connected' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-700'}`}>
+                        Database: {org.database_status}
+                      </span>
+                      <span className="text-[10px] text-slate-500">Email {org.is_smtp_configured ? 'configured' : 'not configured'} · Setup {org.is_setup_complete ? 'complete' : 'incomplete'}</span>
+                    </div>
+                  </td>
+                  <td className="py-3.5 px-4 text-slate-600">
+                    {org.last_sync_at ? new Date(org.last_sync_at).toLocaleString() : 'No sync recorded'}
                   </td>
 
                   <td className="py-3.5 px-4 text-center">

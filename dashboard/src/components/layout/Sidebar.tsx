@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
-export type NavTab = 'superadmin' | 'overview' | 'events' | 'employees' | 'digests' | 'templates' | 'settings';
+export type NavTab = 'superadmin' | 'audit' | 'overview' | 'events' | 'employees' | 'digests' | 'templates' | 'settings';
 
 interface SidebarProps {
   onOpenScanModal: () => void;
@@ -29,12 +29,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isMobileOpen,
   onCloseMobile,
 }) => {
-  const { user, activeOrg, isSuperAdmin, logout } = useAuth();
+  const { user, activeOrg, isSuperAdmin, selectedTenantId, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
   const getActiveTab = (): NavTab => {
     const p = location.pathname;
+    if (p.startsWith('/superadmin/audit-logs')) return 'audit';
     if (p.startsWith('/superadmin')) return 'superadmin';
     if (p.startsWith('/events')) return 'events';
     if (p.startsWith('/employees')) return 'employees';
@@ -46,8 +47,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const activeTab = getActiveTab();
 
-  const navItems = [
-    ...(isSuperAdmin ? [{ id: 'superadmin' as NavTab, path: '/superadmin/organizations', label: 'Platform Hub', icon: Crown }] : []),
+  const platformItems = [
+    { id: 'superadmin' as NavTab, path: '/superadmin/organizations', label: 'Organizations', icon: Crown },
+    { id: 'audit' as NavTab, path: '/superadmin/audit-logs', label: 'Audit Logs', icon: CalendarCheck },
+  ];
+  const tenantItems = [
     { id: 'overview' as NavTab, path: '/overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'events' as NavTab, path: '/events', label: 'Events Log', icon: CalendarCheck },
     { id: 'employees' as NavTab, path: '/employees', label: 'Employees', icon: Users },
@@ -55,6 +59,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'templates' as NavTab, path: '/templates', label: 'Templates', icon: FileCode },
     { id: 'settings' as NavTab, path: '/settings', label: 'Settings & Demo', icon: SettingsIcon },
   ];
+  const canUseTenantOperations = !isSuperAdmin || Boolean(selectedTenantId);
 
   const handleNavClick = (path: string) => {
     navigate(path);
@@ -96,13 +101,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Navigation */}
         <div className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto">
-          <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-            Navigation
-          </div>
-          {navItems.map((item) => {
+          {isSuperAdmin && <>
+          <div className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Platform Management</div>
+          {platformItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
-            const isPlatformTab = item.id === 'superadmin';
             return (
               <button
                 key={item.id}
@@ -110,18 +113,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onClick={() => handleNavClick(item.path)}
                 className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium border transition-colors duration-150 outline-none focus:outline-none focus:ring-0 select-none ${
                   isActive
-                    ? isPlatformTab
-                      ? 'bg-purple-500/20 text-purple-300 font-semibold border-purple-500/40'
-                      : 'bg-rose-500/15 text-rose-400 font-semibold border-rose-500/30'
+                    ? 'bg-purple-500/20 text-purple-300 font-semibold border-purple-500/40'
                     : 'border-transparent text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
                 }`}
               >
                 <Icon
                   className={`w-4 h-4 ${
-                    isActive
-                      ? isPlatformTab
-                        ? 'text-purple-400'
-                        : 'text-rose-400'
+                  isActive
+                    ? 'text-purple-400'
                       : 'text-slate-400'
                   }`}
                 />
@@ -129,8 +128,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </button>
             );
           })}
+          </>}
+
+          {canUseTenantOperations && <>
+          <div className="pt-6 px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+            {isSuperAdmin ? 'Tenant Operations' : 'Navigation'}
+          </div>
+          {tenantItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
+            return (
+              <button key={item.id} type="button" onClick={() => handleNavClick(item.path)}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium border transition-colors duration-150 outline-none select-none ${isActive ? 'bg-rose-500/15 text-rose-400 font-semibold border-rose-500/30' : 'border-transparent text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'}`}>
+                <Icon className={`w-4 h-4 ${isActive ? 'text-rose-400' : 'text-slate-400'}`} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+          </>}
 
           {/* Quick Ops Actions */}
+          {canUseTenantOperations && <>
           <div className="pt-6 px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
             Operations
           </div>
@@ -156,6 +174,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <RefreshCw className="w-4 h-4 text-sky-400" />
             <span>Sync with HRMS</span>
           </button>
+          </>}
         </div>
 
         {/* Bottom User / Session */}

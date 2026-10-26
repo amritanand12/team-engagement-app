@@ -1,7 +1,9 @@
-import React from 'react';
-import { useLocation } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Menu, Play, RefreshCw, Clock, Crown, Building2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { api } from '../../api/client';
+import { SuperAdminOrg } from '../../types';
 
 interface HeaderProps {
   onOpenMobileSidebar: () => void;
@@ -14,11 +16,23 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenScanModal,
   onOpenHrmsSync,
 }) => {
-  const { user, activeOrg, isSuperAdmin } = useAuth();
+  const { user, activeOrg, isSuperAdmin, selectedTenantId, switchTenant } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
+  const [tenants, setTenants] = useState<SuperAdminOrg[]>([]);
+
+  useEffect(() => {
+    if (isSuperAdmin) {
+      const refreshTenants = () => api.getSuperAdminOrganizations().then(setTenants).catch(() => setTenants([]));
+      refreshTenants();
+      window.addEventListener('platform-tenants-updated', refreshTenants);
+      return () => window.removeEventListener('platform-tenants-updated', refreshTenants);
+    }
+  }, [isSuperAdmin]);
 
   const getTabTitle = () => {
     const p = location.pathname;
+    if (p.startsWith('/superadmin/audit-logs')) return 'Platform Audit Logs';
     if (p.startsWith('/superadmin')) return 'Platform SuperAdmin Hub';
     if (p.startsWith('/events')) return 'Celebration Events Log';
     if (p.startsWith('/employees')) return 'Employee Profiles Directory';
@@ -68,14 +82,40 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       <div className="flex items-center gap-2 sm:gap-3">
+        {isSuperAdmin && (
+          <label className="flex items-center gap-1.5 text-[10px] sm:text-xs font-semibold text-slate-600">
+            <span className="hidden sm:inline">{location.pathname.startsWith('/superadmin') ? 'Tenant selection' : 'Managing tenant'}</span>
+            <select
+              aria-label="Select tenant to manage"
+              value={selectedTenantId || ''}
+              onChange={(event) => {
+                const tenantId = event.target.value;
+                if (!tenantId) {
+                  switchTenant(null);
+                  navigate('/superadmin/organizations');
+                  return;
+                }
+                const tenant = tenants.find((item) => item.id === tenantId);
+                switchTenant(tenantId, tenant as any);
+                navigate('/overview');
+              }}
+              className="max-w-32 sm:max-w-56 rounded-lg border border-slate-300 bg-white px-1.5 sm:px-2.5 py-1.5 text-[10px] sm:text-xs text-slate-800"
+            >
+              <option value="">None — platform only</option>
+              {tenants.map((tenant) => (
+                <option key={tenant.id} value={tenant.id}>{tenant.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
         {/* Date Pill */}
         <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-600">
           <Clock className="w-3.5 h-3.5 text-slate-400" />
           <span>Today: {todayFormatted}</span>
         </div>
 
-        {/* HRMS Sync Quick Trigger */}
-        <button
+        {/* Tenant operation shortcuts only appear inside an explicitly selected tenant. */}
+        {(!isSuperAdmin || (selectedTenantId && !location.pathname.startsWith('/superadmin'))) && <button
           type="button"
           onClick={onOpenHrmsSync}
           className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-medium transition-colors shadow-xs"
@@ -83,17 +123,17 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <RefreshCw className="w-3.5 h-3.5 text-sky-500" />
           <span>Sync HRMS</span>
-        </button>
+        </button>}
 
         {/* Primary Run Scan Trigger Button */}
-        <button
+        {(!isSuperAdmin || (selectedTenantId && !location.pathname.startsWith('/superadmin'))) && <button
           type="button"
           onClick={onOpenScanModal}
-          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs sm:text-sm font-semibold transition-all shadow-sm hover:shadow-rose-600/20 active:scale-98"
+          className="inline-flex items-center gap-2 px-2 sm:px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs sm:text-sm font-semibold transition-all shadow-sm hover:shadow-rose-600/20 active:scale-98"
         >
           <Play className="w-3.5 h-3.5 fill-current" />
-          <span>Run Scan Now</span>
-        </button>
+          <span className="hidden sm:inline">Run Scan Now</span>
+        </button>}
       </div>
     </header>
   );

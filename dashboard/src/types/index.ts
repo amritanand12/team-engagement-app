@@ -338,8 +338,13 @@ export interface SuperAdminOrg {
   business_timezone: string;
   is_active: boolean;
   is_demo: boolean;
-  employee_count: number;
-  event_count: number;
+  employee_count: number | null;
+  event_count: number | null;
+  is_db_configured: boolean;
+  is_smtp_configured: boolean;
+  is_setup_complete: boolean;
+  database_status: 'unconfigured' | 'connected' | 'unavailable';
+  last_sync_at: string | null;
   created_at: string;
 }
 

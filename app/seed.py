@@ -149,7 +149,7 @@ def seed_default_organization(db: Session) -> Organization:
             digest_channel_id=settings.DEFAULT_DIGEST_CHANNEL_ID,
             is_active=True,
             is_demo=False,
-            is_setup_complete=True,
+            is_setup_complete=False,
             is_db_configured=False,
             is_smtp_configured=True,
         )
@@ -157,6 +157,5 @@ def seed_default_organization(db: Session) -> Organization:
         db.commit()
         db.refresh(org)
 
-    seed_default_templates(db, org.id)
     seed_default_users(db, org.id)
     return org

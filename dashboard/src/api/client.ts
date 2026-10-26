@@ -112,12 +112,14 @@ async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise
       headers,
     });
 
-    if (response.status === 401) {
+    // Only fire the global unauthorized callback for authenticated endpoints,
+    // NOT for /auth/login itself (which legitimately returns 401 for wrong credentials).
+    if (response.status === 401 && !endpoint.startsWith('/auth/login')) {
       clearStoredApiKey();
       if (onUnauthorizedCallback) {
-        onUnauthorizedCallback('Invalid or expired admin API key. Please log in again.');
+        onUnauthorizedCallback('Session expired. Please log in again.');
       }
-      throw new ApiError('Invalid admin API key', 401);
+      throw new ApiError('Session expired. Please log in again.', 401);
     }
 
     if (!response.ok) {

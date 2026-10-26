@@ -34,7 +34,7 @@ interface EmployeesPageProps {
 
 export const EmployeesPage: React.FC<EmployeesPageProps> = ({ onNavigateTab }) => {
   const { activeOrg } = useAuth();
-  const isSetupIncomplete = Boolean(activeOrg && !activeOrg.is_setup_complete && !activeOrg.is_demo);
+  const isSetupIncomplete = Boolean(activeOrg && (!activeOrg.is_db_configured || !activeOrg.is_setup_complete));
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [total, setTotal] = useState(0);
   const [limit, setLimit] = useState(25);
@@ -95,7 +95,9 @@ export const EmployeesPage: React.FC<EmployeesPageProps> = ({ onNavigateTab }) =
       setEmployees(data.items);
       setTotal(data.total);
     } catch (err: any) {
-      setError(err.message || 'Failed to load employees');
+      const message = err.message || 'Failed to load employees';
+      setError(message);
+      if (err.status === 403 || err.status === 503) toast.warning('Tenant database needs attention', message);
     } finally {
       setLoading(false);
     }

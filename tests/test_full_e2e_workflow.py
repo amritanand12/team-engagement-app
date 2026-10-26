@@ -68,6 +68,7 @@ def test_full_43_step_end_to_end_business_workflow(client, db):
     # 4. Configure database & SMTP for Organization A
     org_db = db.get(Organization, org_a_id)
     org_db.is_db_configured = True
+    org_db.is_demo = True  # Keep this end-to-end flow on the supported shared demo database.
     db.commit()
 
     res_smtp = client.post(

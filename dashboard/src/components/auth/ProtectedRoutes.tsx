@@ -26,6 +26,14 @@ export const SuperAdminRoute: React.FC<{ children?: React.ReactNode }> = ({ chil
   return children ? <>{children}</> : <Outlet />;
 };
 
+export const TenantContextRoute: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
+  const { isSuperAdmin, selectedTenantId } = useAuth();
+  if (isSuperAdmin && !selectedTenantId) {
+    return <Navigate to="/superadmin/organizations" replace />;
+  }
+  return children ? <>{children}</> : <Outlet />;
+};
+
 export const PublicOnlyRoute: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isSuperAdmin } = useAuth();
 

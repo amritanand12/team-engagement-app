@@ -61,8 +61,10 @@ def _probe_connection(url: str, timeout_seconds: int = 2) -> tuple[bool, str]:
     if "psycopg" in url:
         connect_args["connect_timeout"] = timeout_seconds
 
-    probe_engine = create_engine(url, connect_args=connect_args, pool_pre_ping=False)
+    # create_engine is inside try/except so a malformed/empty URL never crashes the process
+    probe_engine = None
     try:
+        probe_engine = create_engine(url, connect_args=connect_args, pool_pre_ping=False)
         with probe_engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         return True, ""
@@ -72,7 +74,28 @@ def _probe_connection(url: str, timeout_seconds: int = 2) -> tuple[bool, str]:
             msg = msg.split("(Background on this error")[0].strip()
         return False, msg
     finally:
-        probe_engine.dispose()
+        if probe_engine is not None:
+            try:
+                probe_engine.dispose()
+            except Exception:
+                pass
+
+
+def _normalise_db_url(url: str) -> str:
+    """
+    Normalises common DATABASE_URL variants to a form SQLAlchemy accepts.
+
+    Railway (and many PaaS providers) inject a URL that starts with
+    ``postgresql://`` or ``postgres://`` without the ``+psycopg2`` driver
+    qualifier.  SQLAlchemy 2.x requires the explicit driver token when the
+    psycopg2 package is used, so we rewrite it here rather than forcing
+    every platform to use the longer form.
+    """
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql+psycopg2://", 1)
+    elif url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    return url
 
 
 def create_resilient_engine(
@@ -86,16 +109,26 @@ def create_resilient_engine(
     automatically falls back to SQLite.
     Returns (engine, is_fallback).
     """
-    target_url = database_url or settings.DATABASE_URL
+    raw_url = database_url or settings.DATABASE_URL
     should_fallback = auto_fallback if auto_fallback is not None else settings.AUTO_FALLBACK_SQLITE
     fallback_target = fallback_url or settings.SQLITE_FALLBACK_URL
     probe_timeout = timeout_seconds if timeout_seconds is not None else settings.DB_CONNECT_TIMEOUT_SECONDS
+
+    # Guard: empty / blank DATABASE_URL → fall back to SQLite immediately
+    if not raw_url or not raw_url.strip():
+        logger.warning(
+            "DATABASE_URL is empty or not set. Falling back to SQLite at: %s",
+            fallback_target,
+        )
+        return _build_sqlite_engine(fallback_target), True
+
+    target_url = _normalise_db_url(raw_url.strip())
 
     # 1. Directly SQLite
     if target_url.startswith("sqlite"):
         return _build_sqlite_engine(target_url), False
 
-    # 2. Non-SQLite (e.g. PostgreSQL)
+    # 2. Non-SQLite (e.g. PostgreSQL) with optional resilience probe
     if should_fallback:
         is_healthy, reason = _probe_connection(target_url, timeout_seconds=probe_timeout)
         if not is_healthy:
@@ -108,7 +141,7 @@ def create_resilient_engine(
             logger.info("Using SQLite fallback at: %s", fallback_target)
             return _build_sqlite_engine(fallback_target), True
 
-    # 3. Use target engine (Postgres)
+    # 3. Use target engine (Postgres) directly — no fallback requested
     eng = create_engine(target_url, pool_pre_ping=True)
     return eng, False
 
@@ -257,8 +290,6 @@ def _run_auto_migrations(eng: Engine) -> None:
             if "is_demo" not in cols:
                 conn.execute(text("ALTER TABLE organization ADD COLUMN is_demo BOOLEAN DEFAULT FALSE"))
 
-            # Keep demo organizations unlocked so demo sandboxes and tests run seamlessly
-            conn.execute(text("UPDATE organization SET is_setup_complete = TRUE, is_db_configured = TRUE, is_smtp_configured = TRUE WHERE is_demo = TRUE"))
             conn.commit()
 
         if "event_log" in tables:
@@ -327,30 +358,29 @@ def get_tenant_db_url(org: Any) -> str | None:
 def get_tenant_engine(org: Any) -> Engine:
     """
     Returns an Engine connected to the tenant's dedicated database.
-    Falls back to the platform engine for demo sandbox organizations or local dev without custom DB.
+    Tenant data never uses the platform database. Missing or invalid configuration fails closed.
     """
-    if getattr(org, "is_db_configured", False) and not getattr(org, "is_demo", False):
-        db_url = get_tenant_db_url(org)
-        if db_url:
-            org_id = getattr(org, "id", "")
-            if org_id not in _tenant_engine_pool:
-                try:
-                    if db_url.startswith("sqlite"):
-                        eng = _build_sqlite_engine(db_url)
-                    else:
-                        eng = create_engine(
-                            db_url,
-                            pool_pre_ping=True,
-                            pool_size=5,
-                            max_overflow=10,
-                        )
-                    _run_auto_migrations(eng)
-                    _tenant_engine_pool[org_id] = eng
-                except Exception as exc:
-                    logger.warning("Failed to create engine for tenant %s: %s", org_id, exc)
-                    return engine
-            return _tenant_engine_pool[org_id]
-    return engine
+    org_id = getattr(org, "id", "")
+    if not getattr(org, "is_db_configured", False):
+        raise RuntimeError(f"Tenant database for organization '{org_id}' is not configured")
+    db_url = get_tenant_db_url(org)
+    if not db_url:
+        raise RuntimeError(f"Tenant database configuration for organization '{org_id}' is incomplete")
+    if org_id not in _tenant_engine_pool:
+        eng: Engine | None = None
+        try:
+            if db_url.startswith("sqlite"):
+                eng = _build_sqlite_engine(db_url)
+            else:
+                eng = create_engine(db_url, pool_pre_ping=True, pool_size=5, max_overflow=10)
+            _run_auto_migrations(eng)
+            _tenant_engine_pool[org_id] = eng
+        except Exception as exc:
+            if eng is not None:
+                eng.dispose()
+            logger.warning("Failed to create engine for tenant %s: %s", org_id, exc)
+            raise RuntimeError(f"Tenant database for organization '{org_id}' is unavailable") from exc
+    return _tenant_engine_pool[org_id]
 
 
 def invalidate_tenant_engine(org_id: str) -> None:
@@ -432,7 +462,12 @@ def init_db() -> None:
     """Create tables and apply incremental schema updates across platform and tenant databases."""
     from app import models  # noqa: F401  (ensures models are registered on Base)
 
-    Base.metadata.create_all(bind=engine)
+    # The platform database owns organization routing, user accounts, and audit history.
+    # Tenant business tables are created only by provision_tenant_database().
+    Base.metadata.create_all(
+        bind=engine,
+        tables=[models.Organization.__table__, models.User.__table__, models.AuditLog.__table__],
+    )
     _run_auto_migrations(engine)
 
     # Auto-migrate all existing configured tenant databases on app startup
@@ -441,7 +476,6 @@ def init_db() -> None:
             orgs = s.query(models.Organization).filter(
                 models.Organization.is_active.is_(True),
                 models.Organization.is_db_configured.is_(True),
-                models.Organization.is_demo.is_(False),
             ).all()
             for org in orgs:
                 try:

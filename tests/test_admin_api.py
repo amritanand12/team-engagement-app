@@ -4,6 +4,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app import database
+from app.database import provision_tenant_database, session_scope
+from app.seed import seed_default_organization, seed_default_templates
 
 HEADERS = {"x-api-key": "test-key"}
 
@@ -11,7 +14,18 @@ HEADERS = {"x-api-key": "test-key"}
 @pytest.fixture()
 def client():
     with TestClient(app) as c:
+        with session_scope() as db:
+            org = seed_default_organization(db)
+            org.is_db_configured = True
+            org.is_setup_complete = True
+            org.db_host = "sqlite://"
+            ok, message = provision_tenant_database(org, target_engine=database.engine)
+            assert ok, message
+            seed_default_templates(db, org.id)
+            db.commit()
+            database._tenant_engine_pool[org.id] = database.engine
         yield c
+    database._tenant_engine_pool.clear()
 
 
 def test_health_endpoint(client):
@@ -262,4 +276,25 @@ def test_admin_list_digests(client):
     assert "items" in data
     assert "total" in data
     assert data["limit"] == 10
+
+
+def test_admin_export_events_csv(client):
+    resp = client.get("/admin/reports/events/export", headers=HEADERS)
+    assert resp.status_code == 200
+    assert "text/csv" in resp.headers["content-type"]
+    assert "attachment; filename=" in resp.headers["content-disposition"]
+    content = resp.text
+    assert "Event ID" in content
+    assert "Employee Code" in content
+
+
+def test_admin_export_employees_csv(client):
+    resp = client.get("/admin/reports/employees/export", headers=HEADERS)
+    assert resp.status_code == 200
+    assert "text/csv" in resp.headers["content-type"]
+    assert "attachment; filename=" in resp.headers["content-disposition"]
+    content = resp.text
+    assert "Employee ID" in content
+    assert "Full Name" in content
+
 

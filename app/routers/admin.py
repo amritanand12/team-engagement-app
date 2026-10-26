@@ -92,7 +92,7 @@ def get_current_user_and_org_context(
         db=db,
     )
     if not org:
-        raise HTTPException(status_code=400, detail="No active organization selected")
+        raise HTTPException(status_code=400, detail="No tenant selected. Select an organization before using tenant operations.")
     return user, org
 
 
@@ -127,23 +127,23 @@ def get_tenant_db(
 ) -> Iterator[Session]:
     """
     Yields a database session connected directly to the tenant's dedicated database.
-    Falls back to the platform database for demo organizations or unconfigured tenants.
+    Tenant operational data is always read from the tenant's dedicated database.
     """
-    if (
-        getattr(org, "is_db_configured", False)
-        and getattr(org, "db_host", None)
-        and getattr(org, "db_name", None)
-        and not getattr(org, "is_demo", False)
-    ):
+    if not org.is_db_configured:
+        raise HTTPException(
+            status_code=403,
+            detail="You cannot add your data before you configure your database and email provider service.",
+        )
+    try:
         eng = get_tenant_engine(org)
-        TenantSession = sessionmaker(bind=eng, autoflush=False, autocommit=False)
-        session = TenantSession()
-        try:
-            yield session
-        finally:
-            session.close()
-    else:
-        yield db
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    TenantSession = sessionmaker(bind=eng, autoflush=False, autocommit=False)
+    session = TenantSession()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 def check_onboarding_guard(org: Organization) -> None:
@@ -151,7 +151,7 @@ def check_onboarding_guard(org: Organization) -> None:
     Enforces that an organization has configured their dedicated database and email provider
     before they can insert employee data or run automated scans.
     """
-    if not org.is_setup_complete and not org.is_demo:
+    if not org.is_setup_complete:
         raise HTTPException(
             status_code=403,
             detail="You cannot add your data before you configure your database and email provider service.",
@@ -163,10 +163,6 @@ def refresh_onboarding_status(org: Organization) -> bool:
     Evaluates whether an organization has completed setup requirements (DB + Email provider).
     If MAIL_PROVIDER is 'mock' or 'system', DB configuration unlocks onboarding seamlessly.
     """
-    if org.is_demo:
-        org.is_setup_complete = True
-        return True
-
     has_db = bool(org.is_db_configured or (org.db_host and org.db_name))
     has_smtp = bool(
         org.is_smtp_configured
@@ -176,6 +172,8 @@ def refresh_onboarding_status(org: Organization) -> bool:
 
     if has_db and has_smtp:
         org.is_setup_complete = True
+    elif not has_db:
+        org.is_setup_complete = False
     return org.is_setup_complete
 
 

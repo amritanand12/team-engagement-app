@@ -110,6 +110,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } else {
       clearStoredTenantId();
       setSelectedTenantId(null);
+      setActiveOrg(null);
     }
   };
 

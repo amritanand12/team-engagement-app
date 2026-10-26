@@ -7,6 +7,7 @@ import { HtmlPreviewIframe } from '../components/common/HtmlPreviewIframe';
 import { Pagination } from '../components/common/Pagination';
 import { EmptyState } from '../components/common/EmptyState';
 import { TableSkeleton } from '../components/common/Skeleton';
+import { useToast } from '../context/ToastContext';
 import {
   Mail,
   RefreshCw,
@@ -18,6 +19,7 @@ import {
 } from 'lucide-react';
 
 export const DigestsPage: React.FC = () => {
+  const toast = useToast();
   const [digests, setDigests] = useState<DigestLog[]>([]);
   const [total, setTotal] = useState(0);
   const [limit, setLimit] = useState(25);
@@ -37,7 +39,9 @@ export const DigestsPage: React.FC = () => {
       setDigests(data.items);
       setTotal(data.total);
     } catch (err: any) {
-      setError(err.message || 'Failed to load daily digests');
+      const message = err.message || 'Failed to load daily digests';
+      setError(message);
+      if (err.status === 403 || err.status === 503) toast.warning('Tenant database needs attention', message);
     } finally {
       setLoading(false);
     }

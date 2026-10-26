@@ -12,8 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.database import get_db
-from app.models import AuditLog, EmployeeProfile, EventLog, Organization, User, UserRole
+from app.database import get_db, get_tenant_engine
+from app.models import AuditLog, EmployeeProfile, EventLog, EventStatus, Organization, User, UserRole
 from app.routers.auth import get_current_user_and_org
 from app.schemas import (
     AuditLogOut,
@@ -25,7 +25,6 @@ from app.schemas import (
     SuperAdminOrgOut,
     UserOut,
 )
-from app.seed import seed_default_templates
 from app.services.audit import record_audit_log
 from app.services.auth import hash_password
 
@@ -53,8 +52,39 @@ def list_all_organizations(
     results: list[SuperAdminOrgOut] = []
 
     for org in orgs:
-        emp_count = db.query(EmployeeProfile).filter(EmployeeProfile.organization_id == org.id).count()
-        event_count = db.query(EventLog).filter(EventLog.organization_id == org.id).count()
+        database_status = "unconfigured"
+        count_db = None
+        if org.is_db_configured:
+            try:
+                tenant_engine = get_tenant_engine(org)
+                with tenant_engine.connect() as connection:
+                    connection.exec_driver_sql("SELECT 1")
+                from sqlalchemy.orm import Session as OrmSession
+                count_db = OrmSession(bind=tenant_engine)
+                database_status = "connected"
+            except Exception:
+                database_status = "unavailable"
+                count_db = None
+
+        if count_db is not None:
+            try:
+                emp_count = count_db.query(EmployeeProfile).filter(EmployeeProfile.organization_id == org.id).count()
+                event_count = count_db.query(EventLog).filter(
+                    EventLog.organization_id == org.id,
+                    EventLog.status == EventStatus.SENT,
+                ).count()
+                last_sync_at = count_db.query(func.max(EmployeeProfile.last_synced_at)).filter(
+                    EmployeeProfile.organization_id == org.id
+                ).scalar()
+            except Exception:
+                emp_count = event_count = last_sync_at = None
+                if database_status == "connected":
+                    database_status = "unavailable"
+            finally:
+                if count_db is not db:
+                    count_db.close()
+        else:
+            emp_count = event_count = last_sync_at = None
         results.append(
             SuperAdminOrgOut(
                 id=org.id,
@@ -67,6 +97,11 @@ def list_all_organizations(
                 is_demo=org.is_demo,
                 employee_count=emp_count,
                 event_count=event_count,
+                is_db_configured=org.is_db_configured,
+                is_smtp_configured=org.is_smtp_configured,
+                is_setup_complete=org.is_setup_complete,
+                database_status=database_status,
+                last_sync_at=last_sync_at,
                 created_at=org.created_at,
             )
         )
@@ -104,10 +139,8 @@ def create_organization_and_admin(
     db.add(org)
     db.flush()
 
-    # 2. Seed Default Templates for this new tenant
-    seed_default_templates(db, org.id)
-
-    # 3. Create Tenant Admin User
+    # Tenant templates are seeded only after the dedicated tenant database is configured.
+    # 2. Create Tenant Admin User
     admin_user = User(
         id=str(uuid.uuid4()),
         organization_id=org.id,

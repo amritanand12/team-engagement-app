@@ -81,9 +81,7 @@ def find_employee_by_photo_token(
     token: str, db: Session
 ) -> tuple[EmployeeProfile | None, Session | None, Organization | None, bool, bool]:
     """
-    Finds an employee by their photo upload token across:
-    1. The primary/platform database
-    2. All active tenant databases (for organizations using BYODB)
+    Finds an employee by their photo upload token in active tenant databases only.
 
     Returns (employee, active_session, organization, is_tenant_session, is_expired).
     """
@@ -92,21 +90,10 @@ def find_employee_by_photo_token(
 
     clean_token = token.strip()
 
-    # 1. Check primary/platform database first
-    emp = db.query(EmployeeProfile).filter(EmployeeProfile.photo_upload_token == clean_token).first()
-    if emp:
-        org = emp.organization or db.get(Organization, emp.organization_id)
-        expired = is_token_expired(emp)
-        return emp, db, org, False, expired
-
-    # 2. Check dedicated tenant databases (BYODB)
+    # Employee records are tenant data and are never read from the platform database.
     orgs = (
         db.query(Organization)
-        .filter(
-            Organization.is_active.is_(True),
-            Organization.is_db_configured.is_(True),
-            Organization.is_demo.is_(False),
-        )
+        .filter(Organization.is_active.is_(True))
         .all()
     )
 
@@ -136,30 +123,14 @@ def find_employee_by_email_or_code(
     email: str, employee_code: str | None, db: Session
 ) -> tuple[EmployeeProfile | None, Session | None, Organization | None, bool]:
     """
-    Finds an employee by email or code across platform and tenant databases.
+    Finds an employee by email or code across tenant databases only.
     """
     email_clean = email.strip().lower()
     code_clean = employee_code.strip() if employee_code else None
 
-    # 1. Check primary platform database
-    q = db.query(EmployeeProfile).filter(EmployeeProfile.email.ilike(email_clean))
-    if code_clean:
-        q = db.query(EmployeeProfile).filter(
-            (EmployeeProfile.email.ilike(email_clean)) | (EmployeeProfile.employee_code == code_clean)
-        )
-    emp = q.first()
-    if emp:
-        org = emp.organization or db.get(Organization, emp.organization_id)
-        return emp, db, org, False
-
-    # 2. Check dedicated tenant databases
     orgs = (
         db.query(Organization)
-        .filter(
-            Organization.is_active.is_(True),
-            Organization.is_db_configured.is_(True),
-            Organization.is_demo.is_(False),
-        )
+        .filter(Organization.is_active.is_(True))
         .all()
     )
 
@@ -196,7 +167,7 @@ def handle_google_form_webhook(
 ):
     """
     Receives photo submissions from Google Forms or Google Apps Script webhooks.
-    Matches employee across platform and tenant databases by email or employee_code,
+    Matches employee across tenant databases by email or employee_code,
     updates photo_url, and sets has_custom_photo = True.
     """
     employee, session, org, is_tenant = find_employee_by_email_or_code(payload.email, payload.employee_code, db)

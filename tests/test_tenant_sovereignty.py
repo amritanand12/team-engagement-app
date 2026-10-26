@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db, provision_tenant_database
 from app.main import app
@@ -166,7 +167,7 @@ def test_test_smtp_connection_endpoint(client, default_org):
     assert "successfully sent" in data["message"]
 
 
-def test_provision_tenant_database_and_unlock_onboarding(client, db):
+def test_provision_tenant_database_and_unlock_onboarding(client, db, monkeypatch):
     """
     Verifies that provision_tenant_database sets up all tables and default templates in a dedicated engine,
     and once both DB and SMTP are configured, the onboarding guard unlocks data insertion.
@@ -183,15 +184,18 @@ def test_provision_tenant_database_and_unlock_onboarding(client, db):
         is_demo=False,
         is_setup_complete=False,
         is_db_configured=False,
+        db_host="sqlite://",
         is_smtp_configured=True,  # SMTP already configured
     )
     db.add(org)
     db.commit()
 
     # Create dedicated tenant engine (simulating tenant dedicated DB)
-    dedicated_engine = create_engine("sqlite://")
+    dedicated_engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     success, msg = provision_tenant_database(org, target_engine=dedicated_engine)
     assert success is True
+    from app.routers import admin as admin_router
+    monkeypatch.setattr(admin_router, "get_tenant_engine", lambda _org: dedicated_engine)
 
     # Verify tables exist and templates were seeded in the dedicated engine
     DedicatedSession = sessionmaker(bind=dedicated_engine)

@@ -5,6 +5,7 @@ import { Badge } from '../components/common/Badge';
 import { Avatar } from '../components/common/Avatar';
 import { CardSkeleton, Skeleton } from '../components/common/Skeleton';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import {
   Users,
   Send,
@@ -39,6 +40,7 @@ interface OverviewPageProps {
 
 export const OverviewPage: React.FC<OverviewPageProps> = ({ onNavigateTab, onOpenScanModal }) => {
   const { activeOrg } = useAuth();
+  const toast = useToast();
   const [stats, setStats] = useState<StatsSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +53,9 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onNavigateTab, onOpe
       const data = await api.getStatsSummary(chartRangeDays);
       setStats(data);
     } catch (err: any) {
-      setError(err.message || 'Failed to load dashboard statistics');
+      const message = err.message || 'Failed to load dashboard statistics';
+      setError(message);
+      if (err.status === 403 || err.status === 503) toast.warning('Tenant database needs attention', message);
     } finally {
       setLoading(false);
     }
@@ -132,7 +136,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({ onNavigateTab, onOpe
   return (
     <div className="space-y-8">
       {/* Onboarding Checklist if Setup Incomplete */}
-      {activeOrg && !activeOrg.is_setup_complete && !activeOrg.is_demo && (
+      {activeOrg && (!activeOrg.is_db_configured || !activeOrg.is_setup_complete) && (
         <div className="p-6 rounded-3xl bg-white border border-amber-200 shadow-md space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-amber-100 pb-4">
             <div className="flex items-start sm:items-center gap-3">

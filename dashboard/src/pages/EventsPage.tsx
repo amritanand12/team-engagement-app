@@ -47,7 +47,9 @@ export const EventsPage: React.FC = () => {
       });
       setEvents(data);
     } catch (err: any) {
-      setError(err.message || 'Failed to load events');
+      const message = err.message || 'Failed to load events';
+      setError(message);
+      if (err.status === 403 || err.status === 503) toast.warning('Tenant database needs attention', message);
     } finally {
       setLoading(false);
     }

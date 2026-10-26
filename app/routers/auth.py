@@ -93,8 +93,6 @@ def get_current_user_and_org(
                 active_org = db.get(Organization, x_tenant_id)
                 if not active_org:
                     active_org = db.query(Organization).filter(Organization.slug == x_tenant_id).first()
-            if not active_org:
-                active_org = db.query(Organization).filter(Organization.slug == "default").first() or db.query(Organization).first()
         elif user.organization_id:
             active_org = db.get(Organization, user.organization_id)
 
@@ -199,8 +197,8 @@ def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
             )
             db.commit()
             raise HTTPException(status_code=403, detail="Organization is suspended")
-    elif user.role == UserRole.SUPER_ADMIN:
-        org = db.query(Organization).filter(Organization.slug == "default").first() or db.query(Organization).first()
+    # Platform administrators start without a tenant context. They must select an
+    # organization before using tenant-scoped endpoints.
 
     token_payload = {
         "sub": user.id,

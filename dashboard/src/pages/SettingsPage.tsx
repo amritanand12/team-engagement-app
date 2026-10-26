@@ -342,7 +342,7 @@ export const SettingsPage: React.FC = () => {
     );
   }
 
-  const isSetupComplete = org?.is_setup_complete || org?.is_demo;
+  const isSetupComplete = Boolean(org?.is_db_configured && org?.is_setup_complete);
 
   return (
     <div className="max-w-4xl space-y-6">

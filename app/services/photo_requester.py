@@ -158,7 +158,6 @@ def scan_and_send_advance_photo_requests(
         org_q = org_q.filter(Organization.id == organization_id)
     orgs = org_q.all()
 
-    from contextlib import nullcontext
     from app.database import tenant_session_scope
 
     for org in orgs:
@@ -168,15 +167,7 @@ def scan_and_send_advance_photo_requests(
         days_ahead = org.photo_request_days_ahead or 7
         target_event_date = base_date + timedelta(days=days_ahead)
 
-        is_dedicated = bool(
-            getattr(org, "is_db_configured", False)
-            and getattr(org, "db_host", None)
-            and getattr(org, "db_name", None)
-            and not getattr(org, "is_demo", False)
-        )
-        ctx = tenant_session_scope(org) if is_dedicated else nullcontext(db)
-
-        with ctx as tdb:
+        with tenant_session_scope(org) as tdb:
             employees = tdb.query(EmployeeProfile).filter(
                 EmployeeProfile.organization_id == org.id,
                 EmployeeProfile.is_active.is_(True),
