@@ -87,7 +87,7 @@ const AppRoutes: React.FC = () => {
           path="/superadmin/organizations"
           element={
             <SuperAdminRoute>
-              <SuperAdminPage key={tenantKey} />
+              <SuperAdminPage />
             </SuperAdminRoute>
           }
         />
@@ -95,7 +95,7 @@ const AppRoutes: React.FC = () => {
           path="/superadmin/organizations/:orgId"
           element={
             <SuperAdminRoute>
-              <SuperAdminPage key={tenantKey} />
+              <SuperAdminPage />
             </SuperAdminRoute>
           }
         />
