@@ -305,16 +305,15 @@ def save_database_configuration(
     # Setup status check (requires DB + SMTP or mock mailer)
     refresh_onboarding_status(org)
 
-    db.commit()
-    db.refresh(org)
-
     # Provision tenant tables directly on target engine
     ok, msg = provision_tenant_database(org, target_engine=test_engine)
     test_engine.dispose()
     if not ok:
+        db.rollback()
+        status_code = 409 if "already contains a different organization" in msg else 500
         raise HTTPException(
-            status_code=500,
-            detail=f"Database connected but provisioning tables failed: {msg}",
+            status_code=status_code,
+            detail=f"Database connected, but tenant tables could not be provisioned. {msg}",
         )
 
     record_audit_log(
@@ -1475,4 +1474,3 @@ def export_employees_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
-

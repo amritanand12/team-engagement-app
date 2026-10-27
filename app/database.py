@@ -27,7 +27,7 @@ def _configure_sqlite_connection(dbapi_connection: Any, connection_record: Any) 
             cursor.execute("PRAGMA foreign_keys=ON;")
             cursor.execute("PRAGMA journal_mode=WAL;")
             cursor.execute("PRAGMA busy_timeout=5000;")
-        except Exception as exc:
+        except Exception:
             logger.debug("Failed to set SQLite pragma: %s", exc)
         finally:
             cursor.close()
@@ -197,7 +197,7 @@ def session_scope() -> Iterator[Session]:
     try:
         yield db
         db.commit()
-    except Exception:
+    except Exception as exc:
         db.rollback()
         raise
     finally:
@@ -417,6 +417,18 @@ def provision_tenant_database(org: Any, target_engine: Engine | None = None) -> 
             org_id = getattr(org, "id", "")
             if org_id:
                 existing_org = s.get(Organization, org_id)
+                existing_slug = (
+                    s.query(Organization)
+                    .filter(Organization.slug == getattr(org, "slug", "tenant-org"))
+                    .first()
+                )
+                if existing_slug and existing_slug.id != org_id:
+                    return (
+                        False,
+                        "The target database already contains a different organization with this slug. "
+                        "Use an empty database dedicated to this tenant, or resolve the existing organization "
+                        "before retrying.",
+                    )
                 if not existing_org:
                     s.add(
                         Organization(
@@ -438,8 +450,16 @@ def provision_tenant_database(org: Any, target_engine: Engine | None = None) -> 
             seed_default_templates(s, org_id)
             s.commit()
         return True, "Tenant database schema and default templates successfully provisioned."
-    except Exception as exc:
-        return False, f"Failed to provision tenant database: {exc}"
+    except Exception:
+        logger.exception(
+            "Tenant database provisioning failed for organization %s",
+            getattr(org, "id", "unknown"),
+        )
+        return (
+            False,
+            "Tenant database provisioning failed. Verify the database schema and permissions, then try again "
+            "or contact support.",
+        )
 
 
 @contextmanager
@@ -485,5 +505,3 @@ def init_db() -> None:
                     logger.warning("Failed to auto-migrate tenant database for org %s: %s", getattr(org, "id", ""), t_exc)
     except Exception as exc:
         logger.warning("Failed to query tenant organizations for auto-migration: %s", exc)
-
-

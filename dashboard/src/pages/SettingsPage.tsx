@@ -53,6 +53,7 @@ export const SettingsPage: React.FC = () => {
   const [testingDb, setTestingDb] = useState(false);
   const [savingDb, setSavingDb] = useState(false);
   const [dbTestResult, setDbTestResult] = useState<TestDbConnectionResponse | null>(null);
+  const [dbProvisionError, setDbProvisionError] = useState<string | null>(null);
 
   // SMTP State
   const [smtpHost, setSmtpHost] = useState('');
@@ -195,6 +196,7 @@ export const SettingsPage: React.FC = () => {
       return;
     }
     setSavingDb(true);
+    setDbProvisionError(null);
     try {
       const updated = await api.saveDatabaseConfiguration({
         db_host: dbHost,
@@ -209,7 +211,13 @@ export const SettingsPage: React.FC = () => {
       toast.success('Database Configured', 'Your private database was connected and provisioned with default templates!');
       fetchOrganization();
     } catch (err: any) {
-      toast.error('Database Setup Failed', err.message);
+      const message = err.message || 'Database setup failed. Verify the database and try again.';
+      setDbProvisionError(
+        message.length > 400 || message.includes('[SQL:')
+          ? 'Database setup failed. Verify that this is an empty database dedicated to the tenant, then try again or contact support.'
+          : message
+      );
+      toast.error('Database Setup Failed', 'See the database settings for details and next steps.');
     } finally {
       setSavingDb(false);
     }
@@ -445,6 +453,13 @@ export const SettingsPage: React.FC = () => {
                 </p>
               )}
             </div>
+          </div>
+        )}
+
+        {dbProvisionError && (
+          <div role="alert" className="p-3 rounded-xl border border-rose-200 bg-rose-50 text-rose-800 text-xs flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <p className="font-semibold">{dbProvisionError}</p>
           </div>
         )}
 
