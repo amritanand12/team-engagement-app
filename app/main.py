@@ -10,7 +10,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -65,6 +65,21 @@ app.include_router(superadmin.router)
 app.include_router(webhooks.router)
 
 dashboard_dist = Path("dashboard/dist")
+
+
+@app.middleware("http")
+async def serve_superadmin_page_on_browser_navigation(request: Request, call_next):
+    dashboard_index = dashboard_dist / "index.html"
+    if (
+        request.method == "GET"
+        and (request.url.path == "/superadmin" or request.url.path.startswith("/superadmin/"))
+        and "text/html" in request.headers.get("accept", "")
+        and dashboard_index.is_file()
+    ):
+        return FileResponse(dashboard_index)
+    return await call_next(request)
+
+
 if dashboard_dist.exists() and (dashboard_dist / "index.html").exists():
     if (dashboard_dist / "assets").exists():
         app.mount("/assets", StaticFiles(directory=dashboard_dist / "assets"), name="dashboard_assets")
@@ -88,4 +103,3 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
-
