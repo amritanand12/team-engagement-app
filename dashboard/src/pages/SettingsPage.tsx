@@ -155,8 +155,8 @@ export const SettingsPage: React.FC = () => {
   };
 
   const handleTestDatabase = async () => {
-    if (!dbHost || !dbName || !dbUser || !dbPassword) {
-      toast.error('Validation Error', 'Please fill in DB Host, Port, Database Name, User, and Password to test.');
+    if (!dbHost || !dbName || !dbUser) {
+      toast.error('Validation Error', 'Please fill in DB Host, Port, Database Name, and User to test.');
       return;
     }
     setTestingDb(true);
@@ -167,7 +167,7 @@ export const SettingsPage: React.FC = () => {
         db_port: Number(dbPort),
         db_name: dbName,
         db_user: dbUser,
-        db_password: dbPassword,
+        db_password: dbPassword || undefined,
         db_ssl_mode: dbSslMode,
       });
       setDbTestResult(res);
@@ -191,8 +191,8 @@ export const SettingsPage: React.FC = () => {
   };
 
   const handleSaveDatabase = async () => {
-    if (!dbHost || !dbName || !dbUser || !dbPassword) {
-      toast.error('Validation Error', 'Please fill in DB Host, Port, Database Name, User, and Password.');
+    if (!dbHost || !dbName || !dbUser) {
+      toast.error('Validation Error', 'Please fill in DB Host, Port, Database Name, and User.');
       return;
     }
     setSavingDb(true);
@@ -203,7 +203,7 @@ export const SettingsPage: React.FC = () => {
         db_port: Number(dbPort),
         db_name: dbName,
         db_user: dbUser,
-        db_password: dbPassword,
+        db_password: dbPassword || undefined,
         db_ssl_mode: dbSslMode,
       });
       setOrg(updated);
@@ -509,7 +509,7 @@ export const SettingsPage: React.FC = () => {
 
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="font-semibold text-slate-700">Password *</label>
+              <label className="font-semibold text-slate-700">Database password</label>
               <button
                 type="button"
                 onClick={() => setShowDbPassword(!showDbPassword)}
@@ -522,7 +522,7 @@ export const SettingsPage: React.FC = () => {
               type={showDbPassword ? 'text' : 'password'}
               value={dbPassword}
               onChange={(e) => setDbPassword(e.target.value)}
-              placeholder="••••••••••••"
+              placeholder="Leave blank to reuse the saved password, or enter a new one"
               className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
             />
           </div>

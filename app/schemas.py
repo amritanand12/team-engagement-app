@@ -328,7 +328,7 @@ class TestDbConnectionIn(BaseModel):
     db_port: int = 5432
     db_name: str
     db_user: str
-    db_password: str
+    db_password: str | None = None
     db_ssl_mode: str = "prefer"
 
 
@@ -477,4 +477,3 @@ class PaginatedAuditLogsOut(BaseModel):
     total: int
     limit: int
     offset: int
-

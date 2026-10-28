@@ -61,7 +61,7 @@ from app.schemas import (
     UpcomingEventItem,
 )
 from app.services.audit import record_audit_log
-from app.services.crypto import encrypt_credential
+from app.services.crypto import decrypt_credential, encrypt_credential
 from app.services.csv_importer import import_employees_from_csv
 from app.services.demo import reset_demo_organization
 from app.services.hrms_sync import sync_employees
@@ -177,6 +177,16 @@ def refresh_onboarding_status(org: Organization) -> bool:
     return org.is_setup_complete
 
 
+def _resolve_database_password(password: str | None, org: Organization) -> str:
+    resolved_password = password or decrypt_credential(org.db_password)
+    if not resolved_password:
+        raise HTTPException(
+            status_code=400,
+            detail="Enter the database password to test or save this connection.",
+        )
+    return resolved_password
+
+
 # ---------------------------------------------------------------------------
 # Organization Settings & Profile
 # ---------------------------------------------------------------------------
@@ -229,13 +239,14 @@ def update_organization_profile(
 @router.post("/settings/test-db", response_model=TestDbConnectionOut)
 def test_database_connection(
     payload: TestDbConnectionIn,
-    _org: Organization = Depends(get_current_org),
+    org: Organization = Depends(get_current_org),
 ):
     """
     Tests connectivity and latency to a tenant's private PostgreSQL database.
     """
+    password = _resolve_database_password(payload.db_password, org)
     user_esc = urllib.parse.quote_plus(payload.db_user)
-    pwd_esc = urllib.parse.quote_plus(payload.db_password)
+    pwd_esc = urllib.parse.quote_plus(password)
     ssl_param = f"?sslmode={payload.db_ssl_mode}" if payload.db_ssl_mode else ""
     url = f"postgresql+psycopg2://{user_esc}:{pwd_esc}@{payload.db_host}:{payload.db_port}/{payload.db_name}{ssl_param}"
 
@@ -273,9 +284,10 @@ def save_database_configuration(
     Saves PostgreSQL connection credentials, provisions tenant tables, and activates BYODB.
     """
     user, org = user_and_org
+    password = _resolve_database_password(payload.db_password, org)
 
     user_esc = urllib.parse.quote_plus(payload.db_user)
-    pwd_esc = urllib.parse.quote_plus(payload.db_password)
+    pwd_esc = urllib.parse.quote_plus(password)
     ssl_param = f"?sslmode={payload.db_ssl_mode}" if payload.db_ssl_mode else ""
     url = f"postgresql+psycopg2://{user_esc}:{pwd_esc}@{payload.db_host}:{payload.db_port}/{payload.db_name}{ssl_param}"
 
@@ -298,7 +310,8 @@ def save_database_configuration(
     org.db_port = payload.db_port
     org.db_name = payload.db_name.strip()
     org.db_user = payload.db_user.strip()
-    org.db_password = encrypt_credential(payload.db_password)
+    if payload.db_password:
+        org.db_password = encrypt_credential(payload.db_password)
     org.db_ssl_mode = payload.db_ssl_mode
     org.is_db_configured = True
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
+from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -133,6 +134,7 @@ def test_save_smtp_configuration_activates_smtp(client, db):
         },
     )
     assert resp.status_code == 200
+
     data = resp.json()
     assert data["is_smtp_configured"] is True
     assert data["is_setup_complete"] is False  # DB still pending
@@ -144,6 +146,88 @@ def test_save_smtp_configuration_activates_smtp(client, db):
     assert org.is_smtp_configured is True
     assert org.smtp_password.startswith("enc:v1:")
     assert decrypt_credential(org.smtp_password) == "smtp_secret_pass"
+
+
+def test_provision_tenant_database_reports_duplicate_slug_without_sql_error():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine, tables=[Organization.__table__])
+    existing_org_id = str(uuid.uuid4())
+    with sessionmaker(bind=engine)() as session:
+        session.add(
+            Organization(
+                id=existing_org_id,
+                name="Existing Organization",
+                slug="covalense-global",
+                api_key=f"key-{uuid.uuid4().hex[:8]}",
+            )
+        )
+        session.commit()
+
+    incoming_org = Organization(
+        id=str(uuid.uuid4()),
+        name="Covalense Global",
+        slug="covalense-global",
+        api_key=f"key-{uuid.uuid4().hex[:8]}",
+    )
+    try:
+        success, message = provision_tenant_database(incoming_org, target_engine=engine)
+        assert success is False
+        assert "already contains a different organization with this slug" in message
+        assert "UNIQUE constraint" not in message
+        with sessionmaker(bind=engine)() as session:
+            assert session.get(Organization, existing_org_id) is not None
+            assert session.get(Organization, incoming_org.id) is None
+    finally:
+        engine.dispose()
+
+
+def test_test_database_connection_uses_saved_password_when_omitted(client, default_org, db, monkeypatch):
+    from app.routers import admin as admin_router
+
+    saved_password = "saved-db-password"
+    default_org.is_db_configured = False
+    default_org.db_password = encrypt_credential(saved_password)
+    db.commit()
+    engine = MagicMock()
+    engine.connect.return_value.__enter__.return_value.execute.return_value.scalar.return_value = "PostgreSQL test"
+    urls = []
+
+    def fake_create_engine(url, **_kwargs):
+        urls.append(url)
+        return engine
+
+    monkeypatch.setattr(admin_router, "create_engine", fake_create_engine)
+
+    response = client.post(
+        "/admin/settings/test-db",
+        headers={"x-api-key": default_org.api_key},
+        json={
+            "db_host": "db.example.com",
+            "db_port": 5432,
+            "db_name": "tenant_db",
+            "db_user": "tenant_user",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert "saved-db-password@" in urls[0]
+
+
+def test_test_database_connection_requests_password_when_none_is_saved(client, default_org, db):
+    response = client.post(
+        "/admin/settings/test-db",
+        headers={"x-api-key": default_org.api_key},
+        json={
+            "db_host": "db.example.com",
+            "db_port": 5432,
+            "db_name": "tenant_db",
+            "db_user": "tenant_user",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Enter the database password to test or save this connection."
 
 
 def test_test_smtp_connection_endpoint(client, default_org):
