@@ -6,16 +6,39 @@ import {
   EmployeeUpdatePayload,
   EventLog,
   EventTemplate,
+  TemplateCreatePayload,
+  TemplateUpdatePayload,
+  TemplatePreviewResponse,
+  EventType,
   HrmsSyncResponse,
+  Organization,
   PaginatedDigests,
   PaginatedEmployees,
   ResendResponse,
   ScanTriggerResponse,
   StatsSummary,
+  TestDbConnectionPayload,
+  TestDbConnectionResponse,
+  TestSmtpConnectionPayload,
+  TestSmtpConnectionResponse,
 } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const AUTH_TOKEN_KEY = 'auth-token';
 const API_KEY_STORAGE_KEY = 'x-api-key';
+const TENANT_ID_STORAGE_KEY = 'x-tenant-id';
+
+export const getStoredAuthToken = (): string | null => {
+  return sessionStorage.getItem(AUTH_TOKEN_KEY);
+};
+
+export const setStoredAuthToken = (token: string): void => {
+  sessionStorage.setItem(AUTH_TOKEN_KEY, token.trim());
+};
+
+export const clearStoredAuthToken = (): void => {
+  sessionStorage.removeItem(AUTH_TOKEN_KEY);
+};
 
 export const getStoredApiKey = (): string | null => {
   return sessionStorage.getItem(API_KEY_STORAGE_KEY);
@@ -27,6 +50,18 @@ export const setStoredApiKey = (key: string): void => {
 
 export const clearStoredApiKey = (): void => {
   sessionStorage.removeItem(API_KEY_STORAGE_KEY);
+};
+
+export const getStoredTenantId = (): string | null => {
+  return sessionStorage.getItem(TENANT_ID_STORAGE_KEY);
+};
+
+export const setStoredTenantId = (tenantId: string): void => {
+  sessionStorage.setItem(TENANT_ID_STORAGE_KEY, tenantId.trim());
+};
+
+export const clearStoredTenantId = (): void => {
+  sessionStorage.removeItem(TENANT_ID_STORAGE_KEY);
 };
 
 export class ApiError extends Error {
@@ -48,14 +83,23 @@ export const setOnUnauthorizedCallback = (cb: (message?: string) => void) => {
 };
 
 async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const token = getStoredAuthToken();
   const apiKey = getStoredApiKey();
+  const tenantId = getStoredTenantId();
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> || {}),
   };
 
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
   if (apiKey) {
     headers['x-api-key'] = apiKey;
+  }
+  if (tenantId) {
+    headers['x-tenant-id'] = tenantId;
   }
 
   const url = `${API_BASE}${endpoint}`;
@@ -172,10 +216,34 @@ export const api = {
     return apiFetch<EventTemplate[]>('/admin/templates');
   },
 
-  updateTemplate: async (templateId: string, isActive: boolean): Promise<EventTemplate> => {
+  createTemplate: async (payload: TemplateCreatePayload): Promise<EventTemplate> => {
+    return apiFetch<EventTemplate>('/admin/templates', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  updateTemplate: async (templateId: string, payload: TemplateUpdatePayload): Promise<EventTemplate> => {
     return apiFetch<EventTemplate>(`/admin/templates/${templateId}`, {
       method: 'PATCH',
-      body: JSON.stringify({ is_active: isActive }),
+      body: JSON.stringify(payload),
+    });
+  },
+
+  deleteTemplate: async (templateId: string): Promise<{ message: string; template_id: string }> => {
+    return apiFetch<{ message: string; template_id: string }>(`/admin/templates/${templateId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  previewTemplate: async (payload: {
+    subject_line: string;
+    html_body: string;
+    event_type: EventType;
+  }): Promise<TemplatePreviewResponse> => {
+    return apiFetch<TemplatePreviewResponse>('/admin/templates/preview', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     });
   },
 
@@ -195,5 +263,150 @@ export const api = {
     return apiFetch<HrmsSyncResponse>('/admin/hrms-sync/trigger', {
       method: 'POST',
     });
+  },
+
+  getOrganization: async (): Promise<any> => {
+    return apiFetch<any>('/admin/organization');
+  },
+
+  updateOrganization: async (payload: any): Promise<Organization> => {
+    return apiFetch<Organization>('/admin/organization', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  testDatabaseConnection: async (payload: TestDbConnectionPayload): Promise<TestDbConnectionResponse> => {
+    return apiFetch<TestDbConnectionResponse>('/admin/settings/test-db', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  saveDatabaseConfiguration: async (payload: TestDbConnectionPayload): Promise<Organization> => {
+    return apiFetch<Organization>('/admin/settings/database', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  testSmtpConnection: async (payload: TestSmtpConnectionPayload): Promise<TestSmtpConnectionResponse> => {
+    return apiFetch<TestSmtpConnectionResponse>('/admin/settings/test-smtp', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  saveSmtpConfiguration: async (payload: TestSmtpConnectionPayload): Promise<Organization> => {
+    return apiFetch<Organization>('/admin/settings/smtp', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  uploadEmployeesCsv: async (file: File): Promise<any> => {
+    const apiKey = getStoredApiKey();
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const headers: Record<string, string> = {};
+    if (apiKey) {
+      headers['x-api-key'] = apiKey;
+    }
+
+    const response = await fetch(`${API_BASE}/admin/employees/upload-csv`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      let errDetail = 'CSV upload failed';
+      try {
+        const d = await response.json();
+        if (d?.detail) errDetail = typeof d.detail === 'string' ? d.detail : JSON.stringify(d.detail);
+      } catch {}
+      throw new ApiError(errDetail, response.status);
+    }
+    return await response.json();
+  },
+
+  resetDemo: async (): Promise<any> => {
+    return apiFetch<any>('/admin/demo/reset', {
+      method: 'POST',
+    });
+  },
+
+  // Auth Methods
+  loginWithEmail: async (email: string, password: string): Promise<any> => {
+    return apiFetch<any>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+  },
+
+  loginWithApiKey: async (apiKey: string): Promise<any> => {
+    return apiFetch<any>('/auth/api-key', {
+      method: 'POST',
+      body: JSON.stringify({ api_key: apiKey }),
+    });
+  },
+
+  getCurrentProfile: async (): Promise<any> => {
+    return apiFetch<any>('/auth/me');
+  },
+
+  // SuperAdmin Methods
+  getSuperAdminOrganizations: async (): Promise<any[]> => {
+    return apiFetch<any[]>('/superadmin/organizations');
+  },
+
+  createOrganization: async (payload: any): Promise<any> => {
+    return apiFetch<any>('/superadmin/organizations', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  toggleOrganizationStatus: async (orgId: string, isActive: boolean): Promise<any> => {
+    return apiFetch<any>(`/superadmin/organizations/${orgId}/status?is_active=${isActive}`, {
+      method: 'PATCH',
+    });
+  },
+
+  changePassword: async (currentPassword: string, newPassword: string, confirmPassword: string): Promise<any> => {
+    return apiFetch<any>('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+        confirm_password: confirmPassword,
+      }),
+    });
+  },
+
+  resetTenantPassword: async (orgId: string, newPassword: string): Promise<any> => {
+    return apiFetch<any>(`/superadmin/organizations/${orgId}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({
+        new_password: newPassword,
+      }),
+    });
+  },
+
+  deleteOrganization: async (orgId: string): Promise<any> => {
+    return apiFetch<any>(`/superadmin/organizations/${orgId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  getAuditLogs: async (params?: { limit?: number; offset?: number; action?: string; search?: string }): Promise<any> => {
+    const query = new URLSearchParams();
+    if (params?.limit) query.append('limit', params.limit.toString());
+    if (params?.offset !== undefined) query.append('offset', params.offset.toString());
+    if (params?.action) query.append('action', params.action);
+    if (params?.search) query.append('search', params.search);
+    const qs = query.toString();
+    return apiFetch<any>(`/superadmin/audit-logs${qs ? `?${qs}` : ''}`);
   },
 };

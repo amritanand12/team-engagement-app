@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
 import { Layout } from './components/layout/Layout';
@@ -9,11 +9,36 @@ import { EventsPage } from './pages/EventsPage';
 import { EmployeesPage } from './pages/EmployeesPage';
 import { DigestsPage } from './pages/DigestsPage';
 import { TemplatesPage } from './pages/TemplatesPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { SuperAdminPage } from './pages/SuperAdminPage';
 
 const AppContent: React.FC = () => {
-  const { isAuthenticated } = useAuth();
-  const [activeTab, setActiveTab] = useState<NavTab>('overview');
+  const { isAuthenticated, isSuperAdmin, user, activeOrg, selectedTenantId } = useAuth();
+  const [activeTab, setActiveTab] = useState<NavTab>(() => (isSuperAdmin ? 'superadmin' : 'overview'));
   const [refreshKey, setRefreshKey] = useState(0);
+  const prevUserIdRef = useRef<string | null>(null);
+
+  // Automatically navigate SuperAdmin to 'superadmin' (Platform Hub)
+  // and Org Admin to 'overview' upon login or session restore
+  useEffect(() => {
+    if (user && user.id !== prevUserIdRef.current) {
+      prevUserIdRef.current = user.id;
+      if (isSuperAdmin) {
+        setActiveTab('superadmin');
+      } else {
+        setActiveTab('overview');
+      }
+    } else if (!user) {
+      prevUserIdRef.current = null;
+    }
+  }, [user, isSuperAdmin]);
+
+  // Strictly enforce role-based tab isolation
+  useEffect(() => {
+    if (!isSuperAdmin && activeTab === 'superadmin') {
+      setActiveTab('overview');
+    }
+  }, [isSuperAdmin, activeTab]);
 
   if (!isAuthenticated) {
     return <LoginPage />;
@@ -23,35 +48,70 @@ const AppContent: React.FC = () => {
     setRefreshKey((prev) => prev + 1);
   };
 
+  const tenantKey = `${refreshKey}-${selectedTenantId || activeOrg?.id || 'none'}`;
+
   const renderActivePage = () => {
     switch (activeTab) {
+      case 'superadmin':
+        if (!isSuperAdmin) {
+          return (
+            <OverviewPage
+              key={tenantKey}
+              onNavigateTab={(tab) => setActiveTab(tab)}
+              onOpenScanModal={() => {}}
+            />
+          );
+        }
+        return (
+          <SuperAdminPage
+            key={tenantKey}
+            onSwitchToTenant={() => setActiveTab('overview')}
+          />
+        );
       case 'overview':
         return (
           <OverviewPage
-            key={refreshKey}
+            key={tenantKey}
             onNavigateTab={(tab) => setActiveTab(tab)}
-            onOpenScanModal={() => {
-              // Triggered via Header / Layout
-            }}
+            onOpenScanModal={() => {}}
           />
         );
       case 'events':
-        return <EventsPage key={refreshKey} />;
+        return <EventsPage key={tenantKey} />;
       case 'employees':
-        return <EmployeesPage key={refreshKey} />;
+        return (
+          <EmployeesPage
+            key={tenantKey}
+            onNavigateTab={(tab) => setActiveTab(tab)}
+          />
+        );
       case 'digests':
-        return <DigestsPage key={refreshKey} />;
+        return <DigestsPage key={tenantKey} />;
       case 'templates':
-        return <TemplatesPage key={refreshKey} />;
+        return <TemplatesPage key={tenantKey} />;
+      case 'settings':
+        return <SettingsPage key={tenantKey} />;
       default:
-        return <OverviewPage key={refreshKey} onNavigateTab={(tab) => setActiveTab(tab)} onOpenScanModal={() => {}} />;
+        return (
+          <OverviewPage
+            key={tenantKey}
+            onNavigateTab={(tab) => setActiveTab(tab)}
+            onOpenScanModal={() => {}}
+          />
+        );
     }
   };
 
   return (
     <Layout
       activeTab={activeTab}
-      onSelectTab={(tab) => setActiveTab(tab)}
+      onSelectTab={(tab) => {
+        if (tab === 'superadmin' && !isSuperAdmin) {
+          setActiveTab('overview');
+        } else {
+          setActiveTab(tab);
+        }
+      }}
       onRefreshData={handleRefreshAll}
     >
       {renderActivePage()}

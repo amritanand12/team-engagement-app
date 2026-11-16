@@ -1,12 +1,17 @@
 services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — persistent business data
+  # ---------------------------------------------------------------------------
   db:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: engagement
       POSTGRES_PASSWORD: engagement
       POSTGRES_DB: engagement
-    ports:
-      - "5432:5432"
+    # NOTE: Port 5432 is intentionally NOT exposed to the host in production.
+    # Uncomment the line below only for local development / debugging.
+    # ports:
+    #   - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -15,25 +20,91 @@ services:
       timeout: 5s
       retries: 5
 
+  # ---------------------------------------------------------------------------
+  # Redis — app cache (db/0) + Celery result backend (db/1) + distributed locks
+  # ---------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    # NOTE: Port 6379 is intentionally NOT exposed to the host in production.
+    # Uncomment the line below only for local development / debugging.
+    # ports:
+    #   - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
+  # ---------------------------------------------------------------------------
+  # RabbitMQ — message broker for Celery task queue
+  # Management UI at http://localhost:15672 (dev only, user: engagement / engagement)
+  # ---------------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: engagement
+      RABBITMQ_DEFAULT_PASS: engagement
+    ports:
+      - "15672:15672"   # Management UI — dev only; remove in production
+    # AMQP port 5672 is kept internal (not published to host)
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # FastAPI backend — REST API only, no background processing
+  # ---------------------------------------------------------------------------
   app:
     build: .
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg2://engagement:engagement@db:5432/engagement
       REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: amqp://engagement:engagement@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      ENABLE_SCHEDULER: "false"   # Scheduling handled by external cron, not FastAPI
     ports:
       - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
+  # ---------------------------------------------------------------------------
+  # Celery worker — executes background tasks (pipeline, email, HRMS sync)
+  # Runs the same Docker image as 'app' but with a different startup command.
+  # Scale with: docker compose up --scale worker=3
+  # ---------------------------------------------------------------------------
+  worker:
+    build: .
+    command: >
+      celery -A app.celery_app.celery_app worker
+      --loglevel=INFO
+      --concurrency=2
+      --hostname=worker@%h
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://engagement:engagement@db:5432/engagement
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: amqp://engagement:engagement@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      ENABLE_SCHEDULER: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # React admin dashboard — static SPA served by Nginx
+  # ---------------------------------------------------------------------------
   dashboard:
     build:
       context: ./dashboard
@@ -45,4 +116,3 @@ services:
 
 volumes:
   pgdata:
-

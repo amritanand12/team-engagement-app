@@ -17,6 +17,8 @@ export interface Employee {
   manager_id: string | null;
   team_channel_id: string | null;
   is_active: boolean;
+  birthday_template_id: string | null;
+  anniversary_template_id: string | null;
   last_synced_at: string | null;
 }
 
@@ -31,6 +33,8 @@ export interface EmployeeCreatePayload {
   department?: string | null;
   manager_id?: string | null;
   team_channel_id?: string | null;
+  birthday_template_id?: string | null;
+  anniversary_template_id?: string | null;
   is_active?: boolean;
 }
 
@@ -45,6 +49,8 @@ export interface EmployeeUpdatePayload {
   department?: string | null;
   manager_id?: string | null;
   team_channel_id?: string | null;
+  birthday_template_id?: string | null;
+  anniversary_template_id?: string | null;
   is_active?: boolean;
 }
 
@@ -79,12 +85,37 @@ export interface EmployeeDetail extends Employee {
 
 export interface EventTemplate {
   id: string;
+  name?: string;
   event_type: EventType;
   variant_key: string;
   subject_line: string;
   html_body: string;
   is_active: boolean;
+  is_default: boolean;
   created_at: string;
+}
+
+export interface TemplateCreatePayload {
+  name: string;
+  event_type: EventType;
+  subject_line: string;
+  html_body: string;
+  variant_key?: string;
+  is_default?: boolean;
+  is_active?: boolean;
+}
+
+export interface TemplateUpdatePayload {
+  name?: string;
+  subject_line?: string;
+  html_body?: string;
+  is_default?: boolean;
+  is_active?: boolean;
+}
+
+export interface TemplatePreviewResponse {
+  rendered_subject: string;
+  rendered_html: string;
 }
 
 export interface DailyStatsItem {
@@ -164,4 +195,167 @@ export interface HrmsSyncResponse {
   message: string;
 }
 
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  api_key: string;
+  company_logo_url: string | null;
+  business_timezone: string;
+  leap_day_policy: string;
+  digest_channel_id: string;
+  db_host: string | null;
+  db_port: number | null;
+  db_name: string | null;
+  db_user: string | null;
+  db_ssl_mode: string | null;
+  is_db_configured: boolean;
+  smtp_host: string | null;
+  smtp_port: number | null;
+  smtp_username: string | null;
+  smtp_from_address: string | null;
+  smtp_use_tls: boolean;
+  is_smtp_configured: boolean;
+  is_setup_complete: boolean;
+  cached_employee_count: number;
+  cached_event_count: number;
+  slack_webhook_url: string | null;
+  teams_webhook_url: string | null;
+  is_active: boolean;
+  is_demo: boolean;
+  created_at: string;
+}
+
+export interface OrganizationUpdatePayload {
+  name?: string;
+  company_logo_url?: string | null;
+  business_timezone?: string;
+  leap_day_policy?: string;
+  digest_channel_id?: string;
+  db_host?: string | null;
+  db_port?: number | null;
+  db_name?: string | null;
+  db_user?: string | null;
+  db_password?: string | null;
+  db_ssl_mode?: string | null;
+  smtp_host?: string | null;
+  smtp_port?: number | null;
+  smtp_username?: string | null;
+  smtp_password?: string | null;
+  smtp_from_address?: string | null;
+  smtp_use_tls?: boolean;
+  slack_webhook_url?: string | null;
+  teams_webhook_url?: string | null;
+}
+
+export interface TestDbConnectionPayload {
+  db_host: string;
+  db_port: number;
+  db_name: string;
+  db_user: string;
+  db_password: string;
+  db_ssl_mode?: string;
+}
+
+export interface TestDbConnectionResponse {
+  success: boolean;
+  latency_ms: number | null;
+  server_version: string | null;
+  message: string;
+}
+
+export interface TestSmtpConnectionPayload {
+  smtp_host: string;
+  smtp_port: number;
+  smtp_username?: string;
+  smtp_password?: string;
+  smtp_from_address: string;
+  smtp_use_tls?: boolean;
+  test_recipient?: string;
+}
+
+export interface TestSmtpConnectionResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface CsvImportError {
+  row: number;
+  error: string;
+}
+
+export interface CsvImportResponse {
+  total_rows: number;
+  imported: number;
+  updated: number;
+  failed: number;
+  errors: CsvImportError[];
+}
+
+export interface DemoResetResponse {
+  success: boolean;
+  message: string;
+  employee_count: number;
+  events_detected: number;
+}
+
+export type UserRole = 'super_admin' | 'tenant_admin' | 'hr_manager' | 'viewer';
+
+export interface User {
+  id: string;
+  email: string;
+  full_name: string;
+  role: UserRole;
+  organization_id: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  token_type: string;
+  user: User;
+  organization: Organization | null;
+}
+
+export interface SuperAdminOrg {
+  id: string;
+  name: string;
+  slug: string;
+  api_key: string;
+  company_logo_url: string | null;
+  business_timezone: string;
+  is_active: boolean;
+  is_demo: boolean;
+  employee_count: number;
+  event_count: number;
+  created_at: string;
+}
+
+export interface CreateTenantPayload {
+  name: string;
+  slug?: string;
+  admin_email: string;
+  admin_name: string;
+  admin_password: string;
+  business_timezone?: string;
+  leap_day_policy?: string;
+}
+
+export interface ChangePasswordPayload {
+  current_password: str;
+  new_password: str;
+  confirm_password: str;
+}
+
+export interface ResetPasswordPayload {
+  new_password: str;
+}
+
+export interface ChangePasswordResponse {
+  success: boolean;
+  message: string;
+}
+
+export type str = string;
 export type int = number;

@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: engagement
+      POSTGRES_PASSWORD: engagement
+      POSTGRES_DB: engagement
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U engagement"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  app:
+    image: amritanand/engagement-api:latest
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://engagement:engagement@db:5432/engagement
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  dashboard:
+    image: amritanand/engagement-dashboard:latest
+    ports:
+      - "8080:80"
+    depends_on:
+      - app
+
+volumes:
+  pgdata:
+

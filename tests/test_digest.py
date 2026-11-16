@@ -10,6 +10,7 @@ from tests.conftest import make_employee
 
 def _rendered_event(db, emp, event_type, years=None, batch_id="2026-08-22"):
     event = EventLog(
+        organization_id=emp.organization_id,
         employee_id=emp.id, event_type=event_type, event_date=date(2026, 8, 22),
         years=years, status=EventStatus.PENDING, batch_id=batch_id,
     )
@@ -81,15 +82,17 @@ def test_digest_truncates_large_batches(db, monkeypatch):
 def test_get_renderable_events_only_includes_rendered_or_sent(db):
     emp = make_employee(db, dob=date(1995, 8, 22))
     pending_event = EventLog(
+        organization_id=emp.organization_id,
         employee_id=emp.id, event_type=EventType.BIRTHDAY, event_date=date(2026, 8, 22),
         status=EventStatus.PENDING, batch_id="2026-08-22",
     )
     failed_event = EventLog(
+        organization_id=emp.organization_id,
         employee_id=emp.id, event_type=EventType.WORK_ANNIVERSARY, event_date=date(2026, 8, 22),
         status=EventStatus.FAILED, batch_id="2026-08-22", years=2,
     )
     db.add_all([pending_event, failed_event])
     db.commit()
 
-    result = digest_service.get_renderable_events_for_batch(db, "2026-08-22")
+    result = digest_service.get_renderable_events_for_batch(db, "2026-08-22", organization_id=emp.organization_id)
     assert result == []

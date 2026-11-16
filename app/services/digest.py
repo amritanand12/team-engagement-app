@@ -62,7 +62,12 @@ def group_events_for_digest(events: list[EventLog]) -> dict:
     }
 
 
-def render_digest(events: list[EventLog], batch_date: date) -> str | None:
+def render_digest(
+    events: list[EventLog],
+    batch_date: date,
+    company_name: str | None = None,
+    company_logo_url: str | None = None,
+) -> str | None:
     """Returns rendered HTML, or None if there is nothing to send (empty digest)."""
     if not events:
         return None
@@ -71,22 +76,29 @@ def render_digest(events: list[EventLog], batch_date: date) -> str | None:
     template_src = (TEMPLATES_DIR / "digest.html").read_text(encoding="utf-8")
     template = _env.from_string(template_src)
 
+    org_name = company_name or settings.COMPANY_NAME
+    org_logo = company_logo_url or settings.COMPANY_LOGO_URL
+
     return template.render(
         display_date=batch_date.strftime("%B %d, %Y"),
-        company_name=settings.COMPANY_NAME,
-        company_logo_url=settings.COMPANY_LOGO_URL,
+        company_name=org_name,
+        company_logo_url=org_logo,
         max_visible=settings.DIGEST_MAX_VISIBLE_PER_SECTION,
         **grouped,
     )
 
 
-def get_renderable_events_for_batch(db: Session, batch_id: str) -> list[EventLog]:
+def get_renderable_events_for_batch(
+    db: Session,
+    batch_id: str,
+    organization_id: str | None = None,
+) -> list[EventLog]:
     """Events that were successfully rendered (or sent) for this batch — used for the digest."""
-    return (
-        db.query(EventLog)
-        .filter(
-            EventLog.batch_id == batch_id,
-            EventLog.status.in_([EventStatus.RENDERED, EventStatus.SENT]),
-        )
-        .all()
+    q = db.query(EventLog).filter(
+        EventLog.batch_id == batch_id,
+        EventLog.status.in_([EventStatus.RENDERED, EventStatus.SENT]),
     )
+    if organization_id:
+        q = q.filter(EventLog.organization_id == organization_id)
+    return q.all()
+

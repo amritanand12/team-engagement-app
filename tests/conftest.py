@@ -16,8 +16,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
-from app.models import EmployeeProfile
-from app.seed import seed_default_templates
+from app.models import EmployeeProfile, Organization
+from app.seed import seed_default_organization
 from app.services.mailer import MockMailer
 
 
@@ -35,9 +35,14 @@ def engine():
 def db(engine):
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     session = SessionLocal()
-    seed_default_templates(session)
+    seed_default_organization(session)
     yield session
     session.close()
+
+
+@pytest.fixture()
+def default_org(db):
+    return db.query(Organization).first()
 
 
 @pytest.fixture()
@@ -48,6 +53,7 @@ def mock_mailer():
 def make_employee(
     db,
     *,
+    organization_id: str | None = None,
     code="E001",
     name="Asha Rao",
     email="asha@example.com",
@@ -57,7 +63,12 @@ def make_employee(
     photo_url=None,
     department="Engineering",
 ) -> EmployeeProfile:
+    if not organization_id:
+        org = db.query(Organization).first()
+        organization_id = org.id if org else "default"
+
     emp = EmployeeProfile(
+        organization_id=organization_id,
         employee_code=code,
         full_name=name,
         preferred_name=None,

@@ -54,18 +54,29 @@ def _parse_date(value: Any) -> date | None:
     return datetime.strptime(value, "%Y-%m-%d").date()
 
 
-def sync_employees(db: Session, records: list[dict[str, Any]] | None = None) -> tuple[int, int]:
-    """Upserts employee_profile rows by employee_code. Returns (created, updated)."""
+def sync_employees(
+    db: Session,
+    records: list[dict[str, Any]] | None = None,
+    organization_id: str | None = None,
+) -> tuple[int, int]:
+    """Upserts employee_profile rows by (organization_id, employee_code). Returns (created, updated)."""
+    if not organization_id:
+        from app.seed import seed_default_organization
+        org = seed_default_organization(db)
+        organization_id = org.id
+
     records = records if records is not None else fetch_hrms_employees()
     created, updated = 0, 0
 
     code_to_id: dict[str, str] = {
-        row.employee_code: row.id for row in db.query(EmployeeProfile).all()
+        row.employee_code: row.id
+        for row in db.query(EmployeeProfile).filter(EmployeeProfile.organization_id == organization_id).all()
     }
 
     for rec in records:
         existing = db.query(EmployeeProfile).filter(
-            EmployeeProfile.employee_code == rec["employee_code"]
+            EmployeeProfile.organization_id == organization_id,
+            EmployeeProfile.employee_code == rec["employee_code"],
         ).first()
 
         manager_id = None
@@ -92,12 +103,16 @@ def sync_employees(db: Session, records: list[dict[str, Any]] | None = None) -> 
                 setattr(existing, k, v)
             updated += 1
         else:
-            emp = EmployeeProfile(employee_code=rec["employee_code"], **payload)
+            emp = EmployeeProfile(
+                organization_id=organization_id,
+                employee_code=rec["employee_code"],
+                **payload,
+            )
             db.add(emp)
             db.flush()
             code_to_id[rec["employee_code"]] = emp.id
             created += 1
 
     db.commit()
-    logger.info("HRMS sync complete: %d created, %d updated", created, updated)
+    logger.info("HRMS sync complete for org %s: %d created, %d updated", organization_id, created, updated)
     return created, updated

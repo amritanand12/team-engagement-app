@@ -17,12 +17,15 @@ def client():
 def test_health_endpoint(client):
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    data = resp.json()
+    assert data["status"] == "ok"
+    assert "database" in data
+    assert "is_fallback" in data
 
 
 def test_admin_endpoint_requires_api_key(client):
     resp = client.post("/admin/scan/trigger")
-    assert resp.status_code == 422  # missing required header
+    assert resp.status_code == 401  # missing required auth header
 
 
 def test_admin_endpoint_rejects_wrong_api_key(client):
