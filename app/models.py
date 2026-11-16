@@ -12,6 +12,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     String,
     Text,
     UniqueConstraint,
@@ -288,3 +289,68 @@ class AuditLog(Base):
     @property
     def organization_name(self) -> str | None:
         return self.organization.name if self.organization else None
+
+
+# ---------------------------------------------------------------------------
+# Async Job Tracking
+# ---------------------------------------------------------------------------
+
+
+class JobStatus(str, enum.Enum):
+    QUEUED = "queued"       # Task published to RabbitMQ, not yet picked up by worker
+    RUNNING = "running"     # Worker started executing the task
+    COMPLETED = "completed" # Task finished successfully
+    FAILED = "failed"       # Task raised an exception after all retries exhausted
+
+
+class PipelineRun(Base):
+    """
+    One row per Celery task submission.
+
+    PostgreSQL is the source of truth for job history. Redis holds a temporary
+    copy of the result for fast polling, but this table persists indefinitely.
+
+    Status lifecycle:
+        API creates row (QUEUED)
+          → Worker picks up task (RUNNING)
+            → Success: COMPLETED + result_json
+            → Failure: FAILED + error_message
+    """
+    __tablename__ = "pipeline_run"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+
+    # Celery task identifier — links this row to Redis result backend
+    task_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+
+    # JOB TYPE: DAILY_SCAN | RESEND | HRMS_SYNC
+    job_type: Mapped[str] = mapped_column(String(64), index=True)
+
+    # Optionally scoped to one organization (None = all orgs / global run)
+    organization_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("organization.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    status: Mapped[JobStatus] = mapped_column(
+        Enum(JobStatus), default=JobStatus.QUEUED, index=True
+    )
+
+    # For DAILY_SCAN jobs — the business date being processed
+    scan_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Failure details
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Success summary (batch_id, sent count, etc.) stored as JSON text
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    organization: Mapped["Organization | None"] = relationship()
+
+    __table_args__ = (
+        Index("ix_pipeline_run_status_created", "status", "created_at"),
+    )

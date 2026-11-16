@@ -15,6 +15,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_FILE = BASE_DIR / ".env"
 
 load_dotenv(ENV_FILE)
+
+
 class Settings:
     # --- Database ---
     DATABASE_URL: str = os.getenv(
@@ -24,8 +26,18 @@ class Settings:
     SQLITE_FALLBACK_URL: str = os.getenv("SQLITE_FALLBACK_URL", "sqlite:///./engagement.db")
     DB_CONNECT_TIMEOUT_SECONDS: int = int(os.getenv("DB_CONNECT_TIMEOUT_SECONDS", "2"))
 
-    # --- Redis (used for send-queue + distributed lock on the daily scan) ---
+    # --- Redis (app cache db/0 + Celery result backend db/1 + distributed locks) ---
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+    # --- Celery (async task queue backed by RabbitMQ + Redis) ---
+    # Broker: RabbitMQ (AMQP) — durable message delivery with at-least-once guarantees.
+    CELERY_BROKER_URL: str = os.getenv(
+        "CELERY_BROKER_URL", "amqp://guest:guest@localhost:5672//"
+    )
+    # Backend: Redis db/1 — stores temporary task results (separate from app cache on db/0).
+    CELERY_RESULT_BACKEND: str = os.getenv(
+        "CELERY_RESULT_BACKEND", "redis://localhost:6379/1"
+    )
 
     # --- Scheduling ---
     # Business timezone the daily scan is pinned to. Do NOT use server-local time:
@@ -33,7 +45,9 @@ class Settings:
     BUSINESS_TIMEZONE: str = os.getenv("BUSINESS_TIMEZONE", "Asia/Kolkata")
     DAILY_SCAN_HOUR: int = int(os.getenv("DAILY_SCAN_HOUR", "6"))
     DAILY_SCAN_MINUTE: int = int(os.getenv("DAILY_SCAN_MINUTE", "0"))
-    ENABLE_SCHEDULER: bool = os.getenv("ENABLE_SCHEDULER", "true").lower() == "true"
+    # Default OFF: scheduling is now handled by an external Render Cron Job that enqueues
+    # tasks into RabbitMQ. Set true only for single-instance local dev without a cron trigger.
+    ENABLE_SCHEDULER: bool = os.getenv("ENABLE_SCHEDULER", "false").lower() == "true"
 
     # --- Leap-year birthday policy ---
     # What to do with a Feb-29 birthday in a non-leap year.

@@ -19,9 +19,20 @@ from app.models import (
     EventTemplate,
     EventType,
     Organization,
+    PipelineRun,
     User,
 )
+from app.repositories.job_repository import (
+    create_job,
+    get_job,
+    get_job_by_task_id,
+    list_jobs,
+    mark_completed,
+    mark_failed,
+    mark_running,
+)
 from app.schemas import (
+    AsyncJobResponse,
     CsvImportResponse,
     CsvImportRowError,
     DailyStatsItem,
@@ -33,11 +44,14 @@ from app.schemas import (
     EmployeeUpdateIn,
     EventLogOut,
     EventTemplateOut,
+    HrmsSyncAsyncResponse,
     HrmsSyncResponse,
     OrganizationOut,
     OrganizationUpdateIn,
     PaginatedDigestsOut,
     PaginatedEmployeesOut,
+    PipelineRunListOut,
+    PipelineRunOut,
     ResendResponse,
     ScanTriggerResponse,
     StatsSummaryResponse,
@@ -53,6 +67,7 @@ from app.schemas import (
     UpcomingEventItem,
 )
 from app.services.audit import record_audit_log
+from app.services.cache import cache_delete, get_or_set
 from app.services.crypto import encrypt_credential
 from app.services.csv_importer import import_employees_from_csv
 from app.services.demo import reset_demo_organization
@@ -64,6 +79,7 @@ from app.services.scanner import find_due_events
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 settings = get_settings()
+
 
 
 def get_current_user_and_org_context(
@@ -419,7 +435,7 @@ def reset_demo(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/scan/trigger", response_model=ScanTriggerResponse)
+@router.post("/scan/trigger", response_model=ScanTriggerResponse, status_code=202)
 def trigger_scan(
     request: Request,
     scan_date: date | None = Query(default=None, description="Defaults to today"),
@@ -427,12 +443,34 @@ def trigger_scan(
     db: Session = Depends(get_db),
 ):
     """
-    Manually runs the full pipeline (scan -> render -> send -> digest) for the current organization.
+    Submit a pipeline run as a background job. Returns 202 Accepted immediately.
+    Poll GET /admin/jobs/{job_id} to track progress.
+
+    The pipeline runs asynchronously via Celery:
+      scan → render → send emails → build digest
     """
     user, org = user_and_org
     check_onboarding_guard(org)
 
-    result = run_tenant_pipeline(db, org.id, scan_date=scan_date)
+    from app.tasks.pipeline_tasks import run_pipeline_task
+    import uuid
+
+    # Publish task to RabbitMQ — returns immediately with an AsyncResult
+    async_result = run_pipeline_task.delay(
+        organization_id=org.id,
+        scan_date_iso=scan_date.isoformat() if scan_date else None,
+    )
+    task_id = async_result.id
+
+    # Persist job record in PostgreSQL so it's visible even before the worker starts
+    job = create_job(
+        db,
+        job_type="DAILY_SCAN",
+        task_id=task_id,
+        organization_id=org.id,
+        scan_date_iso=scan_date.isoformat() if scan_date else None,
+    )
+
     record_audit_log(
         db,
         action="SCAN_TRIGGERED",
@@ -441,11 +479,54 @@ def trigger_scan(
         actor_id=user.id,
         organization_id=org.id,
         resource_type="pipeline",
-        details=f"Scan triggered for date {scan_date or 'today'}: detected {result.detected}, sent {result.sent}, failed {result.failed}",
+        details=f"Async scan queued: task_id={task_id}, date={scan_date or 'today'}",
         ip_address=request.client.host if request.client else None,
     )
     db.commit()
-    return ScanTriggerResponse(**result.__dict__)
+
+    return ScanTriggerResponse(
+        task_id=task_id,
+        job_id=job.id,
+        status="queued",
+        message=f"Pipeline queued — poll GET /admin/jobs/{job.id} for status",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Job Status & History
+# ---------------------------------------------------------------------------
+
+
+@router.get("/jobs", response_model=PipelineRunListOut)
+def list_pipeline_jobs(
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    org: Organization = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    """
+    Return paginated history of pipeline jobs for this organization.
+    Use this to build the job dashboard: running, completed, and failed runs.
+    """
+    items, total = list_jobs(db, organization_id=org.id, limit=limit, offset=offset)
+    return PipelineRunListOut(items=items, total=total, limit=limit, offset=offset)
+
+
+@router.get("/jobs/{job_id}", response_model=PipelineRunOut)
+def get_pipeline_job(
+    job_id: str,
+    org: Organization = Depends(get_current_org),
+    db: Session = Depends(get_db),
+):
+    """
+    Poll the status of a specific pipeline job.
+    Frontend should poll this every 3-5 seconds after submitting a scan trigger.
+    """
+    job = get_job(db, job_id)
+    if not job or job.organization_id != org.id:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
 
 
 # ---------------------------------------------------------------------------
@@ -490,7 +571,7 @@ def get_event(
     return event
 
 
-@router.post("/events/{event_id}/resend", response_model=ResendResponse)
+@router.post("/events/{event_id}/resend", response_model=AsyncJobResponse, status_code=202)
 def resend_event(
     event_id: str,
     request: Request,
@@ -498,39 +579,33 @@ def resend_event(
     db: Session = Depends(get_db),
     tenant_db: Session = Depends(get_tenant_db),
 ):
+    """
+    Queue a background resend for a failed/pending event. Returns 202 immediately.
+    A Redis lock prevents two admins from queueing simultaneous resends for the same event.
+    """
     user, org = user_and_org
-    event = tenant_db.query(EventLog).filter(EventLog.id == event_id, EventLog.organization_id == org.id).first()
+    event = tenant_db.query(EventLog).filter(
+        EventLog.id == event_id,
+        EventLog.organization_id == org.id,
+    ).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-
     if event.status == EventStatus.SENT:
-        return ResendResponse(event_id=event.id, status=event.status, message="Already sent; refusing to resend.")
+        raise HTTPException(
+            status_code=409,
+            detail="Event already sent — refusing to queue another send.",
+        )
 
-    if event.status in (EventStatus.PENDING, EventStatus.FAILED) and not event.rendered_html:
-        render_event(tenant_db, event)
-        tenant_db.commit()
-        if event.status == EventStatus.FAILED:
-            return ResendResponse(event_id=event.id, status=event.status, message=event.error_detail or "Render failed")
+    from app.tasks.email_tasks import resend_event_task
+    async_result = resend_event_task.delay(event_id=event_id, org_id=org.id)
+    task_id = async_result.id
 
-    employee = event.employee or tenant_db.get(EmployeeProfile, event.employee_id)
-    if not employee or not employee.email:
-        event.status = EventStatus.FAILED
-        event.error_detail = "Employee has no email address"
-        tenant_db.commit()
-        return ResendResponse(event_id=event.id, status=event.status, message=event.error_detail)
-
-    mailer = get_mailer(org)
-    event.attempt_count += 1
-    success, error = send_with_retry(mailer, employee.email, event.rendered_subject, event.rendered_html)
-    if success:
-        event.status = EventStatus.SENT
-        event.sent_at = datetime.utcnow()
-        event.error_detail = None
-        msg = "Resent successfully"
-    else:
-        event.status = EventStatus.FAILED
-        event.error_detail = error
-        msg = error or "Send failed"
+    job = create_job(
+        db,
+        job_type="RESEND",
+        task_id=task_id,
+        organization_id=org.id,
+    )
 
     record_audit_log(
         db,
@@ -541,12 +616,17 @@ def resend_event(
         organization_id=org.id,
         resource_type="event",
         resource_id=event.id,
-        details=f"Event resend attempt ({event.event_type.value if hasattr(event.event_type, 'value') else event.event_type}): {msg}",
+        details=f"Resend queued: event_id={event_id}, task_id={task_id}",
         ip_address=request.client.host if request.client else None,
     )
-    tenant_db.commit()
     db.commit()
-    return ResendResponse(event_id=event.id, status=event.status, message=msg)
+
+    return AsyncJobResponse(
+        task_id=task_id,
+        job_id=job.id,
+        message=f"Resend queued — poll GET /admin/jobs/{job.id} for status",
+    )
+
 
 
 # ---------------------------------------------------------------------------
@@ -1125,23 +1205,50 @@ def get_stats_summary(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/hrms-sync/trigger", response_model=HrmsSyncResponse)
+@router.post("/hrms-sync/trigger", response_model=HrmsSyncAsyncResponse, status_code=202)
 def trigger_hrms_sync(
+    request: Request,
     user_and_org: tuple[User, Organization] = Depends(get_current_user_and_org_context),
     db: Session = Depends(get_db),
     tenant_db: Session = Depends(get_tenant_db),
 ):
-    _, org = user_and_org
+    """
+    Queue an HRMS synchronization as a background job. Returns 202 immediately.
+    Poll GET /admin/jobs/{job_id} for progress.
+    """
+    user, org = user_and_org
     check_onboarding_guard(org)
 
-    created, updated = sync_employees(tenant_db)
-    org.cached_employee_count = tenant_db.query(EmployeeProfile).filter(EmployeeProfile.organization_id == org.id).count()
-    db.commit()
-    return HrmsSyncResponse(
-        created=created,
-        updated=updated,
-        message=f"HRMS sync completed: {created} created, {updated} updated",
+    from app.tasks.hrms_tasks import sync_hrms_task
+    async_result = sync_hrms_task.delay(org_id=org.id)
+    task_id = async_result.id
+
+    job = create_job(
+        db,
+        job_type="HRMS_SYNC",
+        task_id=task_id,
+        organization_id=org.id,
     )
+
+    record_audit_log(
+        db,
+        action="HRMS_SYNC_TRIGGERED",
+        actor_email=user.email,
+        actor_role=user.role.value if hasattr(user.role, "value") else str(user.role),
+        actor_id=user.id,
+        organization_id=org.id,
+        resource_type="hrms_sync",
+        details=f"HRMS sync queued: task_id={task_id}",
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+
+    return HrmsSyncAsyncResponse(
+        task_id=task_id,
+        job_id=job.id,
+        message=f"HRMS sync queued — poll GET /admin/jobs/{job.id} for status",
+    )
+
 
 
 # ---------------------------------------------------------------------------

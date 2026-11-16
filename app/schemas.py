@@ -5,7 +5,7 @@ from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from app.models import DigestStatus, EventStatus, EventType
+from app.models import DigestStatus, EventStatus, EventType, JobStatus
 
 EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -129,13 +129,23 @@ class EmployeeDetailOut(EmployeeOut):
 
 
 class ScanTriggerResponse(BaseModel):
-    batch_id: str
-    detected: int
-    rendered: int
-    sent: int
-    failed: int
-    skipped: int
-    digest_status: str
+    """
+    Returned by POST /admin/scan/trigger.
+    HTTP 202 Accepted — includes task_id so the caller can poll /admin/jobs/{task_id}.
+    task_id is None when the pipeline ran synchronously (legacy fallback or mock mode).
+    """
+    task_id: str | None = None
+    job_id: str | None = None
+    status: str = "queued"
+    message: str = "Pipeline submitted successfully"
+    # Legacy synchronous fields (populated when running in mock/test mode)
+    batch_id: str | None = None
+    detected: int | None = None
+    rendered: int | None = None
+    sent: int | None = None
+    failed: int | None = None
+    skipped: int | None = None
+    digest_status: str | None = None
 
 
 class ResendResponse(BaseModel):
@@ -456,4 +466,56 @@ class PaginatedAuditLogsOut(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# ---------------------------------------------------------------------------
+# Async Job Tracking Schemas
+# ---------------------------------------------------------------------------
+
+
+class PipelineRunOut(BaseModel):
+    """
+    API representation of a PipelineRun row.
+    Returned by GET /admin/jobs and GET /admin/jobs/{job_id}.
+    """
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    task_id: str
+    job_type: str
+    organization_id: str | None = None
+    status: JobStatus
+    scan_date: date | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error_message: str | None = None
+    result_json: str | None = None
+    created_at: datetime
+
+
+class PipelineRunListOut(BaseModel):
+    """Paginated job history response."""
+    items: list[PipelineRunOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class AsyncJobResponse(BaseModel):
+    """
+    Immediate 202 response returned when a background job is queued.
+    The client should poll GET /admin/jobs/{job_id} for status updates.
+    """
+    task_id: str
+    job_id: str
+    status: JobStatus = JobStatus.QUEUED
+    message: str = "Job queued successfully"
+
+
+class HrmsSyncAsyncResponse(BaseModel):
+    """202 response for POST /admin/hrms-sync/trigger."""
+    task_id: str
+    job_id: str
+    status: JobStatus = JobStatus.QUEUED
+    message: str = "HRMS sync queued successfully"
 
